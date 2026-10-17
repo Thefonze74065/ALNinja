@@ -52,8 +52,10 @@ const ENDPOINTS = [
 ];
 
 const FIELDS: [string, string][] = [
-  ["price", "Lower-quartile asking price (each merchant's cheapest offer counted once). Falls back to bestBid for buy-only items."],
-  ["lowest / median", "Cheapest and median ask."],
+  ["price", "Lower-quartile asking price (each merchant's cheapest offer counted once), capped at npcPrice. Falls back to npcPrice, then bestBid, when nobody is selling."],
+  ["npcPrice", "What an NPC shop sells one unit for (plain +0 items only), or null. Nobody pays players more, so price never exceeds it."],
+  ["npcValue", "What an NPC pays when you sell them one unit at this level."],
+  ["lowest / median", "Cheapest and median player ask (not capped)."],
   ["bestBid", "Highest buy-order price."],
   ["sellers / buyers", "Merchants with sell / buy offers seen in the last 48h. Treat prices with fewer than 3 as rough."],
   ["quantity", "Total units for sale."],

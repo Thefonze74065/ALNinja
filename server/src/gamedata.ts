@@ -11,6 +11,8 @@ export interface ItemMeta {
   upgradeable: boolean;
   compoundable: boolean;
   stackable: boolean;
+  /** Set when an NPC shop on an active map sells this item (+0, plain) for gold. */
+  npcShop?: { price: number; npc: string; map: string; x: number; y: number };
   // Inputs to calculate_item_value; only set when the game data has them.
   cash?: boolean;
   markup?: number;
@@ -66,9 +68,38 @@ function build(G: any): GameMeta {
         : null,
     };
   }
+  // NPC shops, mirroring process_game_data() in the game's common_functions.js: every NPC with an item
+  // list on a map sells those items for G.items[x].g, except cash-shop items. p2w items cost an
+  // inflation multiplier we don't get, so they're left out. Retired maps (ignore: true) don't count.
+  for (const [mapName, map] of Object.entries<any>(G.maps ?? {})) {
+    if (map.ignore) continue;
+    for (const npc of map.npcs ?? []) {
+      const data = G.npcs?.[npc.id];
+      if (!npc.position || !data?.items) continue;
+      for (const name of data.items) {
+        const def = G.items?.[name];
+        if (!name || !def || !items[name] || def.cash || def.p2w || items[name].npcShop) continue;
+        items[name].npcShop = { price: def.g, npc: data.name ?? npc.id, map: mapName, x: npc.position[0], y: npc.position[1] };
+      }
+    }
+  }
+
   const scrolls: Record<string, number> = {};
   for (const s of ["scroll0", "scroll1", "scroll2", "cscroll0", "cscroll1", "cscroll2"]) scrolls[s] = G.items?.[s]?.g ?? 0;
   return { version: G.version ?? null, items, buyToSell: G.multipliers?.buy_to_sell ?? 0.6, scrolls };
+}
+
+/** Gold an NPC shop charges for one unit, or null if no shop sells it. Shops only sell plain +0 items. */
+export function npcShopPrice(item: string, level: number, variant: string): number | null {
+  if (level !== 0 || variant) return null;
+  return meta.items[item]?.npcShop?.price ?? null;
+}
+
+/** The lower of a player price and the NPC shop price: nobody pays players more than a shop charges. */
+export function capAtShop(price: number | null, item: string, level: number, variant: string): number | null {
+  const shop = npcShopPrice(item, level, variant);
+  if (shop == null) return price;
+  return price == null ? null : Math.min(price, shop);
 }
 
 /**

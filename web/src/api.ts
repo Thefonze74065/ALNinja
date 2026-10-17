@@ -30,6 +30,8 @@ export interface MarketRow {
   level: number;
   variant: string;
   price: number | null;
+  /** NPC shop price, when a shop sells this item; `price` never exceeds it. */
+  npcPrice: number | null;
   lowest: number | null;
   median: number | null;
   bestBid: number | null;
@@ -61,6 +63,7 @@ export interface Variant {
   level: number;
   variant: string;
   npcValue: number;
+  npcPrice: number | null;
   /** Points before this time are daily closes; after it, hourly. */
   hourlyFrom: number;
   points: HistoryPoint[];
@@ -156,7 +159,8 @@ export interface Deal {
   quantity: number;
   totalProfit: number;
   sellers: number | null;
-  seller: DealWhere & { listedAt: number };
+  source: "merchant" | "npc";
+  seller: DealWhere & { listedAt: number | null };
   buyer: (DealWhere & { price: number; quantity: number }) | null;
 }
 

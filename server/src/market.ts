@@ -1,6 +1,6 @@
 import { config } from "./config.ts";
 import { db } from "./db.ts";
-import { getGameMeta, npcSellValue } from "./gamedata.ts";
+import { capAtShop, getGameMeta, npcSellValue, npcShopPrice } from "./gamedata.ts";
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
@@ -26,8 +26,13 @@ export interface MarketRow {
   category: string;
   level: number;
   variant: string;
-  /** Lower-quartile ask (falls back to best bid for buy-only items). */
+  /**
+   * What one unit costs: the lower-quartile player ask, capped at the NPC shop price. Falls back to the
+   * shop price, then the best bid, when nobody is selling.
+   */
   price: number | null;
+  /** Price an NPC shop sells one unit for, or null if no shop sells it. */
+  npcPrice: number | null;
   lowest: number | null;
   median: number | null;
   bestBid: number | null;
@@ -104,8 +109,13 @@ function salesWindowDays(now: number): number {
   return Math.min(7, Math.max(1, (now - since) / DAY));
 }
 
-/** Price change against the last observation at or before `target` (within `tolerance`), ask-to-ask only. */
-function changeSince(series: PriceRow[], latest: PriceRow, target: number, tolerance: number): number | null {
+/**
+ * Price change against the last observation at or before `target` (within `tolerance`), ask-to-ask only,
+ * with both ends capped at the NPC shop price (`shop`) so asks above it can't fake a move.
+ */
+function changeSince(
+  series: PriceRow[], latest: PriceRow, target: number, tolerance: number, shop: number | null,
+): number | null {
   let base: PriceRow | undefined;
   for (const r of series) {
     if (r.bucket > target) break;
@@ -114,7 +124,9 @@ function changeSince(series: PriceRow[], latest: PriceRow, target: number, toler
   if (!base || base.bucket < target - tolerance) return null;
   // Single-seller prices swing on one stand; don't report a change unless both ends have competition.
   if (base.sell_count < 2 || latest.sell_count < 2 || !base.sell_p25 || latest.sell_p25 == null) return null;
-  return (latest.sell_p25 - base.sell_p25) / base.sell_p25;
+  const then = shop == null ? base.sell_p25 : Math.min(base.sell_p25, shop);
+  const now = shop == null ? latest.sell_p25 : Math.min(latest.sell_p25, shop);
+  return (now - then) / then;
 }
 
 const key = (r: { item: string; level: number; variant: string }) => `${r.item}\u0000${r.level}\u0000${r.variant}`;
@@ -139,9 +151,11 @@ function computeSnapshot(region: string, now: number): MarketRow[] {
 
   const currentBucket = Math.floor(now / HOUR) * HOUR;
   const meta = getGameMeta().items;
-  const headline = (r: PriceRow) => r.sell_p25 ?? r.buy_max;
   return [...byKey.entries()].map(([k, series]) => {
     const latest = series[series.length - 1];
+    const shop = npcShopPrice(latest.item, latest.level, latest.variant);
+    const headline = (r: PriceRow) =>
+      r.sell_p25 != null ? (shop == null ? r.sell_p25 : Math.min(r.sell_p25, shop)) : (shop ?? r.buy_max);
     // One sparkline point per day over the last 7 days: the last observation of that day.
     const daily = new Map<number, number | null>();
     for (const r of series) if (r.bucket >= now - 7 * DAY) daily.set(Math.floor(r.bucket / DAY), headline(r));
@@ -154,6 +168,7 @@ function computeSnapshot(region: string, now: number): MarketRow[] {
       level: latest.level,
       variant: latest.variant,
       price: headline(latest),
+      npcPrice: shop,
       lowest: latest.sell_min,
       median: latest.sell_median,
       bestBid: latest.buy_max,
@@ -161,8 +176,8 @@ function computeSnapshot(region: string, now: number): MarketRow[] {
       buyers: latest.buy_count,
       quantity: latest.sell_qty,
       npcValue: m ? npcSellValue(latest.item, latest.level) : null,
-      change24h: changeSince(series, latest, now - DAY, 3 * HOUR),
-      change7d: changeSince(series, latest, now - 7 * DAY, 6 * HOUR),
+      change24h: changeSince(series, latest, now - DAY, 3 * HOUR, shop),
+      change7d: changeSince(series, latest, now - 7 * DAY, 6 * HOUR, shop),
       soldPerDay: s ? s.sold / days : 0,
       boughtPerDay: s ? s.bought / days : 0,
       sparkline: [...daily.values()],
@@ -208,12 +223,17 @@ export function history(item: string, region: string, days: number) {
   const firstHourly = (stmts.firstHourly.get() as { t: number | null }).t;
   const hourlyFrom = firstHourly == null ? Date.now() : Math.floor(firstHourly / DAY) * DAY;
 
-  type Out = { level: number; variant: string; npcValue: number; hourlyFrom: number; points: unknown[] };
+  type Out = {
+    level: number; variant: string; npcValue: number; npcPrice: number | null; hourlyFrom: number; points: unknown[];
+  };
   const variants = new Map<string, Out>();
   const get = (level: number, variant: string) => {
     const k = `${level}\u0000${variant}`;
     if (!variants.has(k)) {
-      variants.set(k, { level, variant, npcValue: npcSellValue(item, level), hourlyFrom, points: [] });
+      variants.set(k, {
+        level, variant, npcValue: npcSellValue(item, level), npcPrice: npcShopPrice(item, level, variant),
+        hourlyFrom, points: [],
+      });
     }
     return variants.get(k)!;
   };
@@ -307,6 +327,7 @@ export function velocity(item: string, region: string, days: number) {
   const outcomes = new Map<string, any[]>();
   for (const l of stmts.listingOutcomes.all(item, region, since) as any[]) {
     get(l.level, l.variant);
+    l.market = capAtShop(l.market, item, l.level, l.variant);
     const k = `${l.level}\u0000${l.variant}`;
     (outcomes.get(k) ?? outcomes.set(k, []).get(k)!).push(l);
   }
@@ -366,7 +387,10 @@ export interface Deal {
   totalProfit: number;
   /** Merchants selling this item/level/variant (underpriced deals). */
   sellers: number | null;
-  seller: Where & { listedAt: number };
+  /** Who sells: a player merchant, or an NPC shop (flips where the shop is the cheapest source). */
+  source: "merchant" | "npc";
+  /** For an NPC shop: region/server are "", listedAt is null and merchantSeenAt is the time of the request. */
+  seller: Where & { listedAt: number | null };
   /** Flips only: the buy order to sell into. */
   buyer: (Where & { price: number; quantity: number }) | null;
 }
@@ -394,9 +418,10 @@ let dealCachePoll: number | null = null;
 /**
  * Buyable listings from merchants seen within FRESH_HOURS that are worth more elsewhere:
  * - npc: an NPC pays more than the asking price (gifted items pay 1, temporary ones 1/8).
- * - underpriced: at least minDiscount under the cheapest competing ask (what you could relist at),
- *   for items with at least minSellers merchants selling. A resale estimate, not guaranteed.
- * - flip: someone's buy order pays more than another merchant's asking price.
+ * - underpriced: at least minDiscount under the cheapest competing ask or NPC shop price (what you
+ *   could relist at), for items with at least minSellers merchants selling. A resale estimate.
+ * - flip: someone's buy order pays more than the cheapest source: another merchant's ask, or an NPC
+ *   shop (merchant asks above the shop price are skipped; the shop is the better source).
  */
 export function deals(region: string, opts: DealOptions): Deal[] {
   const cacheKey = `${region}|${JSON.stringify(opts)}`;
@@ -425,6 +450,7 @@ export function deals(region: string, opts: DealOptions): Deal[] {
     quantity,
     totalProfit: (reference - l.price) * quantity,
     sellers: null,
+    source: "merchant",
     seller: { ...where(l), listedAt: l.first_seen },
     buyer: null,
     ...extra,
@@ -456,7 +482,7 @@ export function deals(region: string, opts: DealOptions): Deal[] {
     for (const l of sells) {
       const byMerchant = asks.get(key(l))!;
       if (byMerchant.size < opts.minSellers) continue;
-      let competing = Infinity;
+      let competing = npcShopPrice(l.item, l.level, l.variant) ?? Infinity;
       for (const [m, price] of byMerchant) if (m !== l.merchant) competing = Math.min(competing, price);
       if (l.price <= competing * (1 - opts.minDiscount)) {
         out.push(make("underpriced", l, competing, l.quantity, { sellers: byMerchant.size }));
@@ -467,6 +493,8 @@ export function deals(region: string, opts: DealOptions): Deal[] {
     const bids = new Map<string, any[]>();
     for (const b of listings) if (b.side === "buy") (bids.get(key(b)) ?? bids.set(key(b), []).get(key(b))!).push(b);
     for (const l of sells) {
+      const shop = npcShopPrice(l.item, l.level, l.variant);
+      if (shop != null && l.price >= shop) continue;
       // The best bid from anyone but the seller themselves.
       const best = (bids.get(key(l)) ?? [])
         .filter((b) => b.merchant !== l.merchant && b.price > l.price)
@@ -474,6 +502,23 @@ export function deals(region: string, opts: DealOptions): Deal[] {
       if (!best) continue;
       const quantity = Math.min(l.quantity, best.quantity);
       out.push(make("flip", l, best.price, quantity, {
+        buyer: { ...where(best), price: best.price, quantity: best.quantity },
+      }));
+    }
+    // Buy orders paying more than an NPC shop charges: buy from the shop, sell into the order.
+    const now = Date.now();
+    for (const orders of bids.values()) {
+      const best = [...orders].sort((a, b) => b.price - a.price)[0];
+      const shopItem = names[best.item]?.npcShop;
+      const shop = npcShopPrice(best.item, best.level, best.variant);
+      if (shop == null || !shopItem || best.price <= shop) continue;
+      const npc = {
+        item: best.item, level: best.level, variant: best.variant, flags: "", price: shop, merchant: shopItem.npc,
+        server_region: "", server_identifier: "", map: shopItem.map, x: shopItem.x, y: shopItem.y,
+        last_seen: now, first_seen: null,
+      };
+      out.push(make("flip", npc, best.price, best.quantity, {
+        source: "npc",
         buyer: { ...where(best), price: best.price, quantity: best.quantity },
       }));
     }

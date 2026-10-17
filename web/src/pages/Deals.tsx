@@ -14,18 +14,26 @@ const KINDS: { kind: DealKind; label: string; worth: string; blurb: string }[] =
     kind: "flip",
     label: "Flips",
     worth: "Bid",
-    blurb: "Another merchant's buy order pays more than this asking price: buy here, sell into their order.",
+    blurb:
+      "A merchant's buy order pays more than you can buy the item for, from another merchant or from an NPC shop: buy it, then sell into their order.",
   },
   {
     kind: "underpriced",
     label: "Below market",
     worth: "Next ask",
     blurb:
-      "Listed well under the cheapest competing seller, the price you could relist at. A resale estimate, not a guarantee: rare items often sit for a while.",
+      "Listed well under the cheapest competing seller or NPC shop, the price you could relist at. A resale estimate, not a guarantee: rare items often sit for a while.",
   },
 ];
 
-function Where({ w }: { w: DealWhere }) {
+function Where({ w, npc = false }: { w: DealWhere; npc?: boolean }) {
+  if (npc) {
+    return (
+      <span title={`${w.map} (${Math.round(w.x)}, ${Math.round(w.y)})`}>
+        {w.merchant} <span className="muted">NPC shop · {w.map}</span>
+      </span>
+    );
+  }
   return (
     <span title={`${w.map} (${Math.round(w.x)}, ${Math.round(w.y)}) · seen ${ago(w.merchantSeenAt)}`}>
       {w.merchant} <span className="muted">{w.region} {w.server}</span>
@@ -120,7 +128,7 @@ export function Deals({ meta, region }: { meta: GameMeta | null; region: string 
                   <td className="num hide-sm">{percent(d.discount).replace("+", "")}</td>
                   <td className="num hide-sm">{d.quantity}</td>
                   <td className="num price">{gold(d.totalProfit)}</td>
-                  <td><Where w={d.seller} /></td>
+                  <td><Where w={d.seller} npc={d.source === "npc"} /></td>
                   {kind === "flip" && <td>{d.buyer && <Where w={d.buyer} />}</td>}
                 </tr>
               ))}

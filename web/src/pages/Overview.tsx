@@ -125,7 +125,14 @@ export function Overview({ meta, region }: { meta: GameMeta | null; region: stri
                   <td>
                     <ItemCell meta={meta} row={r} />
                   </td>
-                  <td className="num price">{gold(r.price)}</td>
+                  <td className="num price">
+                    {r.npcPrice != null && r.price === r.npcPrice && (
+                      <span className="badge badge-muted" title={`NPC shops sell this for ${gold(r.npcPrice)}; player asks are higher`}>
+                        NPC
+                      </span>
+                    )}{" "}
+                    {gold(r.price)}
+                  </td>
                   <td className="num hide-md">{gold(r.lowest)}</td>
                   <td className="num hide-sm">{gold(r.bestBid)}</td>
                   <td className="num" title={`${r.sellers} merchants selling (${r.quantity} units), ${r.buyers} buying`}>
@@ -152,7 +159,8 @@ export function Overview({ meta, region }: { meta: GameMeta | null; region: stri
       <p className="footnote">
         <strong>Price</strong> is the lower-quartile asking price across recently seen merchants, counting each
         merchant's cheapest offer once, so a few overpriced stands don't skew it. Items with fewer than 3 merchants are
-        dimmed: treat those prices as rough. <strong>Sold/day</strong> is estimated from stock disappearing from
+        dimmed: treat those prices as rough. Items NPC shops sell are capped at the shop price (marked{" "}
+        <span className="badge badge-muted">NPC</span> where the shop is cheaper). <strong>Sold/day</strong> is estimated from stock disappearing from
         stands priced near the market. Changes need at least 2 sellers at both ends.
       </p>
     </section>

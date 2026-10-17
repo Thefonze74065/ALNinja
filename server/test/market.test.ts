@@ -4,7 +4,7 @@ import { app, HOUR, merchant } from "./helpers.ts";
 
 const { ingest } = app.collector;
 const { deals, dealOptions, snapshot } = app.market;
-const { setGameData, npcSellValue } = await import("../src/gamedata.ts");
+const { setGameData, npcSellValue, npcShopPrice } = await import("../src/gamedata.ts");
 
 setGameData({
   version: 1,
@@ -14,8 +14,19 @@ setGameData({
     t_cash: { name: "Cash Item", type: "misc", g: 1000, cash: 1 },
     t_ring: { name: "Ring", type: "ring", g: 1000, compound: {}, grades: [2, 3] },
     t_bow: { name: "Bow", type: "weapon", g: 1000, upgrade: {} },
+    t_shop: { name: "Shop Scroll", type: "uscroll", g: 1000 },
+    t_cashshop: { name: "Cash Shop Item", type: "misc", g: 50, cash: 1 },
+    t_retired: { name: "Retired Shop Item", type: "misc", g: 10 },
     scroll0: { g: 1000 }, scroll1: { g: 40000 }, scroll2: { g: 1600000 },
     cscroll0: { g: 6400 }, cscroll1: { g: 240000 }, cscroll2: { g: 9200000 },
+  },
+  npcs: {
+    shopkeeper: { name: "Lucas", items: ["t_shop", "t_cashshop", null] },
+    oldkeeper: { name: "Old", items: ["t_retired"] },
+  },
+  maps: {
+    main: { npcs: [{ id: "shopkeeper", position: [-464, -96] }] },
+    old_main: { ignore: true, npcs: [{ id: "oldkeeper", position: [0, 0] }] },
   },
 });
 
@@ -129,5 +140,74 @@ describe("price changes", () => {
     assert.ok(Math.abs(change.change24h! - 0.2) < 1e-9);
     assert.equal(rows.find((r) => r.item === "t_solo")!.change24h, null);
     assert.equal(change.change7d, null, "no 7-day history yet");
+  });
+});
+
+describe("NPC shop prices", () => {
+  test("only plain +0 items sold for gold on active maps", () => {
+    assert.equal(npcShopPrice("t_shop", 0, ""), 1000);
+    assert.equal(npcShopPrice("t_shop", 1, ""), null);
+    assert.equal(npcShopPrice("t_shop", 0, "shiny"), null);
+    assert.equal(npcShopPrice("t_cashshop", 0, ""), null);
+    assert.equal(npcShopPrice("t_retired", 0, ""), null);
+  });
+
+  test("headline price is capped at the shop price; raw asks are kept", () => {
+    ingest([
+      merchant("ShopA", now, { trade1: { name: "t_shop", price: 5000 } }),
+      merchant("ShopB", now, { trade1: { name: "t_shop", price: 6000 } }),
+    ], now);
+    const row = snapshot("ALL").find((r) => r.item === "t_shop")!;
+    assert.equal(row.price, 1000);
+    assert.equal(row.npcPrice, 1000);
+    assert.equal(row.lowest, 5000);
+  });
+
+  test("a cheap ask is not 'below market' when a shop sells for less (upgrade scroll case)", () => {
+    ingest([
+      merchant("ScrollCheap", now, { trade1: { name: "t_shop", price: 2000, q: 30 } }),
+      ...["S1", "S2", "S3"].map((id) => merchant(id, now, { trade1: { name: "t_shop", price: 1_200_000 } })),
+    ], now);
+    assert.equal(deals("ALL", all({ kind: "underpriced" })).filter((d) => d.item === "t_shop").length, 0);
+  });
+
+  test("a listing under the shop price is still a deal, valued at the shop price", () => {
+    ingest([
+      merchant("ScrollDeal", now, { trade1: { name: "t_shop", price: 500 } }),
+      ...["S1", "S2", "S3"].map((id) => merchant(id, now, { trade1: { name: "t_shop", price: 1_200_000 } })),
+    ], now);
+    const [d] = deals("ALL", all({ kind: "underpriced" })).filter((d) => d.item === "t_shop");
+    assert.equal(d.reference, 1000);
+    assert.equal(d.totalProfit, 500);
+  });
+
+  test("bids above the shop price are flips sourced from the shop; dearer merchant asks are skipped", () => {
+    ingest([
+      merchant("ShopBuyer", now, { trade1: { name: "t_shop", price: 1500, b: true, q: 3 } }),
+      merchant("Pricey", now, { trade1: { name: "t_shop", price: 1200 } }),
+    ], now);
+    const flips = deals("ALL", all({ kind: "flip" })).filter((d) => d.item === "t_shop");
+    assert.equal(flips.length, 1);
+    assert.equal(flips[0].source, "npc");
+    assert.equal(flips[0].seller.merchant, "Lucas");
+    assert.equal(flips[0].seller.map, "main");
+    assert.equal(flips[0].totalProfit, 1500);
+  });
+
+  test("asks above the shop price can't fake a price move", () => {
+    const then = now - 24.5 * HOUR;
+    const asks = (t: number, price: number) =>
+      ["Mv1", "Mv2"].map((id) => merchant(id, t, { trade1: { name: "t_shop", price } }));
+    ingest(asks(then, 5000), then);
+    ingest(asks(now, 8000), now);
+    assert.equal(snapshot("ALL").find((r) => r.item === "t_shop")!.change24h, 0);
+  });
+
+  test("a far-above-shop listing disappearing is a withdrawal, not a sale", () => {
+    const keep = { trade9: { name: "t_keep_shop", price: 1 } };
+    ingest([merchant("Hoarder", now, { ...keep, trade1: { name: "t_shop", price: 50_000 } })], now);
+    ingest([merchant("Hoarder", now + 60_000, keep)], now + 60_000);
+    const l = app.db.db.prepare("SELECT close_reason FROM listings WHERE merchant = 'Hoarder' AND item = 't_shop'").get() as any;
+    assert.equal(l.close_reason, "withdrawn");
   });
 });

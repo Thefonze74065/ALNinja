@@ -4,6 +4,7 @@ import zlib from "node:zlib";
 import { fetchMerchants, type Merchant, type MerchantSlot } from "./aldata.ts";
 import { config } from "./config.ts";
 import { db, transaction } from "./db.ts";
+import { capAtShop, npcShopPrice } from "./gamedata.ts";
 
 const HOUR = 3_600_000;
 
@@ -93,8 +94,10 @@ const stmts = {
 export const PLACEHOLDER_PRICE = 1e10;
 export const PLAUSIBLE_MARKUP = 3;
 function plausibleTrade(l: Offer): boolean {
-  const market = (stmts.marketPrice.get(l.item, l.level, l.variant) as { sell_p25: number | null } | undefined)
-    ?.sell_p25;
+  const p25 = (stmts.marketPrice.get(l.item, l.level, l.variant) as { sell_p25: number | null } | undefined)
+    ?.sell_p25 ?? null;
+  // Nobody pays a player more than an NPC shop charges.
+  const market = p25 == null ? npcShopPrice(l.item, l.level, l.variant) : capAtShop(p25, l.item, l.level, l.variant);
   if (!market) return l.price < PLACEHOLDER_PRICE;
   return l.side === "sell" ? l.price <= market * PLAUSIBLE_MARKUP : l.price >= market / PLAUSIBLE_MARKUP;
 }

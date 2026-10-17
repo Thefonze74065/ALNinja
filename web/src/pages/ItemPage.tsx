@@ -67,22 +67,31 @@ export function ItemPage({
   const chart = useMemo(() => {
     if (!selected) return null;
     const h = selected.points;
+    const shop = selected.npcPrice;
+    const cap = (v: number | null) => (v == null || shop == null ? v : Math.min(v, shop));
     const price: Series[] = [
-      { label: "Price (lower quartile)", color: "--series-1", values: h.map((p) => (p.sellers ? p.price : null)) },
-      { label: "Median ask", color: "--series-3", values: h.map((p) => p.median), dash: true },
+      // Asks above the shop price are irrelevant (and would flatten the chart), so asks are capped too.
+      // Bids aren't: one above the shop price is a real opportunity.
+      { label: "Price (lower quartile)", color: "--series-1", values: h.map((p) => (p.sellers ? cap(p.price) : null)) },
+      { label: "Median ask", color: "--series-3", values: h.map((p) => cap(p.median)), dash: true },
       { label: "Best bid", color: "--series-2", values: h.map((p) => p.bestBid) },
+      ...(shop != null ? [{ label: "NPC shop", color: "--text-muted", values: h.map(() => shop), dash: true }] : []),
     ];
     const merchants: Series[] = [
       { label: "Merchants selling", color: "--series-1", values: h.map((p) => p.sellers), bars: true },
     ];
     const latest = h[h.length - 1];
     const first = h.find((p) => p.sellers && p.price != null);
+    const now = latest?.sellers ? cap(latest.price) : null;
+    const then = first ? cap(first.price) : null;
     return {
       times: h.map((p) => p.t),
       price,
       merchants,
       latest,
-      change: latest?.sellers && latest.price != null && first?.price ? (latest.price - first.price) / first.price : null,
+      // Nobody pays more than the shop: headline and change use the capped price.
+      headline: latest ? (latest.sellers ? cap(latest.price) : (shop ?? latest.price)) : null,
+      change: now != null && then ? (now - then) / then : null,
     };
   }, [selected]);
 
@@ -128,12 +137,13 @@ export function ItemPage({
           <h1>{m?.name ?? item}</h1>
           <p className="muted">
             {m?.category ?? "Unknown"} · {m?.type ?? "?"}
+            {selected?.npcPrice != null && <> · NPC shop sells at {gold(selected.npcPrice)}</>}
             {selected ? <> · NPCs pay {gold(selected.npcValue)}</> : m && <> · NPC price {gold(m.value)}</>}
           </p>
         </div>
         {chart?.latest && (
           <div className="headline">
-            <div className="headline-value">{gold(chart.latest.price)}</div>
+            <div className="headline-value">{gold(chart.headline)}</div>
             <div className="muted">
               <Change value={chart.change} /> over {rangeLabel}
               {region !== "ALL" && <> · {region}</>}

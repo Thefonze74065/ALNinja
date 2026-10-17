@@ -77,6 +77,9 @@ process.env.ARCHIVE_RAW = "false";
 const { db } = await import("./db.ts");
 const { ingest } = await import("./collector.ts");
 const { maintain } = await import("./archive.ts");
+const { refreshGameData } = await import("./gamedata.ts");
+// Sale detection uses NPC shop prices, so load the same game data the live server uses.
+await refreshGameData();
 
 console.log(`[rebuild] replaying ${snapshots.length} snapshots from ${new Date(snapshots[0].at).toISOString()}`);
 const started = performance.now();
