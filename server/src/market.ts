@@ -1,5 +1,6 @@
+import { config } from "./config.ts";
 import { db } from "./db.ts";
-import { getGameMeta } from "./gamedata.ts";
+import { getGameMeta, npcSellValue } from "./gamedata.ts";
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
@@ -33,6 +34,7 @@ export interface MarketRow {
   sellers: number;
   buyers: number;
   quantity: number;
+  /** Gold an NPC pays for one unit at this level. */
   npcValue: number | null;
   change24h: number | null;
   change7d: number | null;
@@ -54,6 +56,11 @@ const stmts = {
     GROUP BY item, level, variant, side`),
   trackingSince: db.prepare("SELECT MIN(fetched_at) AS t FROM polls WHERE error IS NULL"),
   lastPoll: db.prepare("SELECT MAX(id) AS id, MAX(fetched_at) AS at FROM polls WHERE error IS NULL"),
+  freshListings: db.prepare(`
+    SELECT l.id, l.merchant, l.side, l.item, l.level, l.variant, l.flags, l.price, l.quantity, l.first_seen,
+      m.last_seen, m.server_region, m.server_identifier, m.map, m.x, m.y
+    FROM listings l JOIN merchants m ON m.id = l.merchant
+    WHERE l.closed_at IS NULL AND m.last_seen >= ?1 AND (?2 = 'ALL' OR m.server_region = ?2)`),
   openListings: db.prepare(`
     SELECT l.merchant, l.side, l.level, l.variant, l.price, l.quantity, l.first_seen,
       m.last_seen, m.server_region, m.server_identifier, m.map, m.x, m.y
@@ -150,7 +157,7 @@ function computeSnapshot(region: string, now: number): MarketRow[] {
       sellers: latest.sell_count,
       buyers: latest.buy_count,
       quantity: latest.sell_qty,
-      npcValue: m?.value ?? null,
+      npcValue: m ? npcSellValue(latest.item, latest.level) : null,
       change24h: changeSince(series, latest, now - DAY, 3 * HOUR),
       change7d: changeSince(series, latest, now - 7 * DAY, 6 * HOUR),
       soldPerDay: s ? s.sold / days : 0,
@@ -191,10 +198,12 @@ export function movers(region: string, window: "24h" | "7d", minSellers: number,
 
 export function history(item: string, region: string, days: number) {
   const rows = stmts.itemHistory.all(item, region, Date.now() - days * DAY) as unknown as PriceRow[];
-  const variants = new Map<string, { level: number; variant: string; points: unknown[] }>();
+  const variants = new Map<string, { level: number; variant: string; npcValue: number; points: unknown[] }>();
   for (const r of rows) {
     const k = `${r.level}\u0000${r.variant}`;
-    if (!variants.has(k)) variants.set(k, { level: r.level, variant: r.variant, points: [] });
+    if (!variants.has(k)) {
+      variants.set(k, { level: r.level, variant: r.variant, npcValue: npcSellValue(item, r.level), points: [] });
+    }
     variants.get(k)!.points.push({
       t: r.bucket, price: r.sell_p25 ?? r.buy_max, lowest: r.sell_min, median: r.sell_median,
       bestBid: r.buy_max, sellers: r.sell_count, buyers: r.buy_count, quantity: r.sell_qty,
@@ -302,4 +311,174 @@ export function velocity(item: string, region: string, days: number) {
   }
 
   return [...result.values()];
+}
+
+export type DealKind = "npc" | "underpriced" | "flip";
+
+interface Where {
+  merchant: string;
+  region: string;
+  server: string;
+  map: string;
+  x: number;
+  y: number;
+  merchantSeenAt: number;
+}
+
+export interface Deal {
+  kind: DealKind;
+  item: string;
+  name: string;
+  level: number;
+  variant: string;
+  flags: string;
+  /** Price to buy one unit from the seller. */
+  price: number;
+  /** What a unit is worth: NPC sell value, cheapest competing ask, or the buyer's bid. */
+  reference: number;
+  profitPerUnit: number;
+  /** Price as a share below the reference (0.25 = 25% under). */
+  discount: number;
+  quantity: number;
+  totalProfit: number;
+  /** Merchants selling this item/level/variant (underpriced deals). */
+  sellers: number | null;
+  seller: Where & { listedAt: number };
+  /** Flips only: the buy order to sell into. */
+  buyer: (Where & { price: number; quantity: number }) | null;
+}
+
+export interface DealOptions {
+  kinds: DealKind[];
+  minDiscount: number;
+  minSellers: number;
+  minProfit: number;
+  sort: "profit" | "discount";
+  limit: number;
+}
+
+function where(l: any): Where {
+  return {
+    merchant: l.merchant, region: l.server_region, server: l.server_identifier, map: l.map, x: l.x, y: l.y,
+    merchantSeenAt: l.last_seen,
+  };
+}
+
+// Cached per option set until the next poll; bounded since options come from public query strings.
+const dealCache = new Map<string, Deal[]>();
+let dealCachePoll: number | null = null;
+
+/**
+ * Buyable listings from merchants seen within FRESH_HOURS that are worth more elsewhere:
+ * - npc: an NPC pays more than the asking price (gifted items pay 1, temporary ones 1/8).
+ * - underpriced: at least minDiscount under the cheapest competing ask (what you could relist at),
+ *   for items with at least minSellers merchants selling. A resale estimate, not guaranteed.
+ * - flip: someone's buy order pays more than another merchant's asking price.
+ */
+export function deals(region: string, opts: DealOptions): Deal[] {
+  const cacheKey = `${region}|${JSON.stringify(opts)}`;
+  const { id } = lastPoll();
+  if (id !== dealCachePoll || dealCache.size > 200) {
+    dealCache.clear();
+    dealCachePoll = id;
+  }
+  const hit = dealCache.get(cacheKey);
+  if (hit) return hit;
+
+  const listings = stmts.freshListings.all(Date.now() - config.freshHours * HOUR, region) as any[];
+  const names = getGameMeta().items;
+  const out: Deal[] = [];
+  const make = (kind: DealKind, l: any, reference: number, quantity: number, extra: Partial<Deal> = {}): Deal => ({
+    kind,
+    item: l.item,
+    name: names[l.item]?.name ?? l.item,
+    level: l.level,
+    variant: l.variant,
+    flags: l.flags,
+    price: l.price,
+    reference,
+    profitPerUnit: reference - l.price,
+    discount: 1 - l.price / reference,
+    quantity,
+    totalProfit: (reference - l.price) * quantity,
+    sellers: null,
+    seller: { ...where(l), listedAt: l.first_seen },
+    buyer: null,
+    ...extra,
+  });
+
+  // Identical listings from one merchant (six belts at the same price) are one deal with their quantities summed.
+  const merged = new Map<string, any>();
+  for (const l of listings) {
+    if (l.side !== "sell") continue;
+    const k = `${l.merchant}\u0000${key(l)}\u0000${l.price}\u0000${l.flags}`;
+    const m = merged.get(k);
+    if (m) m.quantity += l.quantity;
+    else merged.set(k, { ...l });
+  }
+  const sells = [...merged.values()];
+  if (opts.kinds.includes("npc")) {
+    for (const l of sells) {
+      const npc = npcSellValue(l.item, l.level, l.flags);
+      if (npc > l.price) out.push(make("npc", l, npc, l.quantity));
+    }
+  }
+  if (opts.kinds.includes("underpriced")) {
+    // Each merchant's cheapest ask per item/level/variant.
+    const asks = new Map<string, Map<string, number>>();
+    for (const l of sells) {
+      const byMerchant = asks.get(key(l)) ?? asks.set(key(l), new Map()).get(key(l))!;
+      byMerchant.set(l.merchant, Math.min(l.price, byMerchant.get(l.merchant) ?? Infinity));
+    }
+    for (const l of sells) {
+      const byMerchant = asks.get(key(l))!;
+      if (byMerchant.size < opts.minSellers) continue;
+      let competing = Infinity;
+      for (const [m, price] of byMerchant) if (m !== l.merchant) competing = Math.min(competing, price);
+      if (l.price <= competing * (1 - opts.minDiscount)) {
+        out.push(make("underpriced", l, competing, l.quantity, { sellers: byMerchant.size }));
+      }
+    }
+  }
+  if (opts.kinds.includes("flip")) {
+    const bids = new Map<string, any[]>();
+    for (const b of listings) if (b.side === "buy") (bids.get(key(b)) ?? bids.set(key(b), []).get(key(b))!).push(b);
+    for (const l of sells) {
+      // The best bid from anyone but the seller themselves.
+      const best = (bids.get(key(l)) ?? [])
+        .filter((b) => b.merchant !== l.merchant && b.price > l.price)
+        .sort((a, b) => b.price - a.price)[0];
+      if (!best) continue;
+      const quantity = Math.min(l.quantity, best.quantity);
+      out.push(make("flip", l, best.price, quantity, {
+        buyer: { ...where(best), price: best.price, quantity: best.quantity },
+      }));
+    }
+  }
+
+  const result = out
+    .filter((d) => d.profitPerUnit >= opts.minProfit)
+    .sort((a, b) => (opts.sort === "discount" ? b.discount - a.discount : 0) || b.totalProfit - a.totalProfit)
+    .slice(0, opts.limit);
+  dealCache.set(cacheKey, result);
+  return result;
+}
+
+const DEAL_KINDS: DealKind[] = ["npc", "underpriced", "flip"];
+
+/** Parses deal query parameters (shared by the UI and public endpoints), clamping to sane ranges. */
+export function dealOptions(q: (name: string) => string | undefined): DealOptions {
+  const num = (name: string, fallback: number, min: number, max: number) => {
+    const n = Number(q(name));
+    return q(name) !== undefined && q(name) !== "" && Number.isFinite(n) ? Math.min(Math.max(n, min), max) : fallback;
+  };
+  const kinds = (q("kind") ?? "").split(",").filter((k): k is DealKind => DEAL_KINDS.includes(k as DealKind));
+  return {
+    kinds: kinds.length ? kinds : DEAL_KINDS,
+    minDiscount: num("min_discount", 0.2, 0, 0.99),
+    minSellers: num("min_sellers", 3, 1, 1000),
+    minProfit: num("min_profit", 1, 0, 1e12),
+    sort: q("sort") === "discount" ? "discount" : "profit",
+    limit: num("limit", 100, 1, 500),
+  };
 }

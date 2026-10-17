@@ -60,6 +60,7 @@ export interface HistoryPoint {
 export interface Variant {
   level: number;
   variant: string;
+  npcValue: number;
   points: HistoryPoint[];
 }
 
@@ -127,6 +128,36 @@ export interface Movers {
   mostTraded: MarketRow[];
 }
 
+export type DealKind = "npc" | "underpriced" | "flip";
+
+export interface DealWhere {
+  merchant: string;
+  region: string;
+  server: string;
+  map: string;
+  x: number;
+  y: number;
+  merchantSeenAt: number;
+}
+
+export interface Deal {
+  kind: DealKind;
+  item: string;
+  name: string;
+  level: number;
+  variant: string;
+  flags: string;
+  price: number;
+  reference: number;
+  profitPerUnit: number;
+  discount: number;
+  quantity: number;
+  totalProfit: number;
+  sellers: number | null;
+  seller: DealWhere & { listedAt: number };
+  buyer: (DealWhere & { price: number; quantity: number }) | null;
+}
+
 export interface Status {
   lastPoll: { fetched_at: number; error: string | null } | null;
   lastSuccessfulPoll: { fetched_at: number; merchants: number } | null;
@@ -149,6 +180,8 @@ export const api = {
   status: () => get<Status>("/status"),
   overview: (region: string) => get<MarketRow[]>(`/overview?region=${region}`),
   movers: (region: string, window: string) => get<Movers>(`/movers?region=${region}&window=${window}`),
+  deals: (region: string, params: Record<string, string>) =>
+    get<Deal[]>(`/deals?${new URLSearchParams({ region, ...params })}`),
   item: (item: string, days: number, region: string) =>
     get<ItemDetail>(`/items/${encodeURIComponent(item)}?days=${days}&region=${region}`),
 };

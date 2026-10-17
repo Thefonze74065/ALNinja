@@ -128,7 +128,7 @@ export function ItemPage({
           <h1>{m?.name ?? item}</h1>
           <p className="muted">
             {m?.category ?? "Unknown"} · {m?.type ?? "?"}
-            {m && <> · NPC value {gold(m.value)}</>}
+            {selected ? <> · NPCs pay {gold(selected.npcValue)}</> : m && <> · NPC price {gold(m.value)}</>}
           </p>
         </div>
         {chart?.latest && (

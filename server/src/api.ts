@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { config } from "./config.ts";
 import { db } from "./db.ts";
 import { getGameMeta } from "./gamedata.ts";
-import { DAY, history, movers, openListings, recentSales, regionParam, snapshot, velocity } from "./market.ts";
+import { DAY, dealOptions, deals, history, movers, openListings, recentSales, regionParam, snapshot, velocity } from "./market.ts";
 
 const stmts = {
   lastPoll: db.prepare("SELECT * FROM polls ORDER BY id DESC LIMIT 1"),
@@ -40,6 +40,11 @@ api.get("/overview", (c) => c.json(snapshot(regionParam(c.req.query("region"))))
 api.get("/movers", (c) => {
   const window = c.req.query("window") === "7d" ? "7d" : "24h";
   return c.json({ window, ...movers(regionParam(c.req.query("region")), window, 3, 25) });
+});
+
+api.get("/deals", (c) => {
+  const region = regionParam(c.req.query("region"));
+  return c.json(deals(region, dealOptions((name) => c.req.query(name))));
 });
 
 api.get("/items/:item", (c) => {

@@ -2,11 +2,12 @@ import { useEffect, useState } from "react";
 import { api, type GameMeta, type Status } from "./api";
 import { ago } from "./format";
 import { ApiDocs } from "./pages/ApiDocs";
+import { Deals } from "./pages/Deals";
 import { ItemPage } from "./pages/ItemPage";
 import { Movers } from "./pages/Movers";
 import { Overview } from "./pages/Overview";
 
-/** Minimal hash router: "#/" overview, "#/movers", "#/api", "#/item/<id>?level=2&variant=shiny". */
+/** Minimal hash router: "#/" overview, "#/movers", "#/deals", "#/api", "#/item/<id>?level=2&variant=shiny". */
 function useRoute() {
   const [hash, setHash] = useState(location.hash);
   useEffect(() => {
@@ -55,7 +56,7 @@ export function App() {
     api.status().then(setStatus, console.error);
   }, []);
 
-  const page = parts[0] === "movers" ? "movers" : parts[0] === "api" ? "api" : parts[0] === "item" ? "item" : "prices";
+  const page = ["movers", "deals", "api", "item"].includes(parts[0]) ? parts[0] : "prices";
   const lastPoll = status?.lastSuccessfulPoll;
   const failing = status?.lastPoll?.error;
 
@@ -68,6 +69,7 @@ export function App() {
         <nav className="mainnav" aria-label="Pages">
           <a href="#/" className={page === "prices" ? "active" : ""}>Prices</a>
           <a href="#/movers" className={page === "movers" ? "active" : ""}>Movers</a>
+          <a href="#/deals" className={page === "deals" ? "active" : ""}>Deals</a>
           <a href="#/api" className={page === "api" ? "active" : ""}>API</a>
         </nav>
         <nav className="tabs region" aria-label="Server region">
@@ -91,6 +93,8 @@ export function App() {
           <ItemPage item={decodeURIComponent(parts[1])} params={params} meta={meta} region={region} />
         ) : page === "movers" ? (
           <Movers meta={meta} region={region} trackingSince={status?.tracking_since ?? null} />
+        ) : page === "deals" ? (
+          <Deals meta={meta} region={region} />
         ) : page === "api" ? (
           <ApiDocs />
         ) : (

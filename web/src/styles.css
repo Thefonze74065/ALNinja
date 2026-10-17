@@ -178,6 +178,14 @@ input[type="search"] {
   color: inherit;
   font: inherit;
 }
+select {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: inherit;
+  font: inherit;
+}
 .check {
   display: flex;
   gap: 6px;
