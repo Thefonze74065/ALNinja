@@ -75,7 +75,8 @@ process.env.DB_PATH = newDb;
 process.env.ARCHIVE_DIR = newArchive;
 process.env.ARCHIVE_RAW = "false";
 const { db } = await import("./db.ts");
-const { ingest } = await import("./collector.ts");
+const { ingest, recomputePrices } = await import("./collector.ts");
+const { transaction } = await import("./db.ts");
 const { maintain } = await import("./archive.ts");
 const { refreshGameData } = await import("./gamedata.ts");
 // Sale detection uses NPC shop prices, so load the same game data the live server uses.
@@ -83,17 +84,34 @@ await refreshGameData();
 
 console.log(`[rebuild] replaying ${snapshots.length} snapshots from ${new Date(snapshots[0].at).toISOString()}`);
 const started = performance.now();
+// Prices only need computing on each hour's last snapshot: that's the one that sets the hour's
+// row live, and ingest never reads the current hour's prices (see ingest()).
+const HOUR = 3_600_000;
+const hourOf = (t: number) => Math.floor(t / HOUR);
+const lastInHour = (i: number) => i === snapshots.length - 1 || hourOf(snapshots[i + 1].at) !== hourOf(snapshots[i].at);
 let skipped = 0;
+let unpriced: number | null = null; // time of the latest ingested snapshot whose hour still needs prices
+const progressEvery = Math.max(500, Math.round(snapshots.length / 20));
 for (const [i, s] of snapshots.entries()) {
   try {
     const merchants = JSON.parse(zlib.gunzipSync(fs.readFileSync(s.file)).toString());
     if (!Array.isArray(merchants)) throw new Error("not an array");
-    ingest(merchants, s.at);
+    ingest(merchants, s.at, { prices: lastInHour(i) });
+    unpriced = lastInHour(i) ? null : s.at;
   } catch (err) {
     skipped++;
     console.warn(`[rebuild] skipping ${s.file}: ${(err as Error).message}`);
+    // If this was meant to be the hour's pricing snapshot, price the hour from the last good one.
+    if (lastInHour(i) && unpriced != null) {
+      const at = unpriced;
+      transaction(() => recomputePrices(at));
+      unpriced = null;
+    }
   }
-  if ((i + 1) % 500 === 0) console.log(`[rebuild] ${i + 1}/${snapshots.length}`);
+  if ((i + 1) % progressEvery === 0) {
+    const pct = Math.round(((i + 1) / snapshots.length) * 100);
+    console.log(`[rebuild] ${i + 1}/${snapshots.length} snapshots (${pct}%)`);
+  }
 }
 const archived = maintain(Date.now(), true);
 db.exec("PRAGMA wal_checkpoint(TRUNCATE)");

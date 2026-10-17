@@ -72,8 +72,9 @@ const stmts = {
     SELECT id, slot, side, item, level, variant, price, quantity, flags, first_seen
     FROM listings WHERE merchant = ? AND closed_at IS NULL`),
   touch: db.prepare("UPDATE listings SET last_seen = ?, quantity = ?, slot = ? WHERE id = ?"),
+  // The last completed hour's market price (see plausibleTrade).
   marketPrice: db.prepare(`
-    SELECT sell_p25 FROM price_history WHERE item = ? AND region = 'ALL' AND level = ? AND variant = ?
+    SELECT sell_p25 FROM price_history WHERE item = ? AND region = 'ALL' AND level = ? AND variant = ? AND bucket < ?
     ORDER BY bucket DESC LIMIT 1`),
   pendingFor: db.prepare(`
     SELECT id, slot, side, item, level, variant, price, quantity, flags, first_seen, closed_at, server_region
@@ -112,8 +113,14 @@ const stmts = {
  */
 export const PLACEHOLDER_PRICE = 1e10;
 export const PLAUSIBLE_MARKUP = 3;
-function plausibleTrade(l: Offer): boolean {
-  const p25 = (stmts.marketPrice.get(l.item, l.level, l.variant) as { sell_p25: number | null } | undefined)
+/**
+ * Judges against the market as of the last completed hour (before `at`'s hour). The current hour's row
+ * is rewritten by every poll; ignoring it means ingesting doesn't depend on mid-hour price updates,
+ * which is what lets a rebuild recompute prices once per hour and still match live polling exactly.
+ */
+function plausibleTrade(l: Offer, at: number): boolean {
+  const hour = Math.floor(at / HOUR) * HOUR;
+  const p25 = (stmts.marketPrice.get(l.item, l.level, l.variant, hour) as { sell_p25: number | null } | undefined)
     ?.sell_p25 ?? null;
   // Nobody pays a player more than an NPC shop charges.
   const market = p25 == null ? npcShopPrice(l.item, l.level, l.variant) : capAtShop(p25, l.item, l.level, l.variant);
@@ -148,7 +155,7 @@ function syncMerchant(m: Merchant, stats: Stats) {
   };
   const keep = (l: OpenListing, o: Offer) => {
     stmts.touch.run(seen, o.quantity, o.slot, l.id);
-    if (o.quantity < l.quantity && plausibleTrade(l)) sale(l, l.quantity - o.quantity);
+    if (o.quantity < l.quantity && plausibleTrade(l, seen)) sale(l, l.quantity - o.quantity);
   };
 
   // Same slot first, then the same goods at the same price moved to another slot.
@@ -173,7 +180,7 @@ function syncMerchant(m: Merchant, stats: Stats) {
   /** The same goods came back (`o`): a reprice, or a withdrawal if at the same price. A smaller stack sold the difference. */
   const resolveRelisted = (l: OpenListing, o: Offer, at: number) => {
     relistings.add(o);
-    if (o.quantity < l.quantity && plausibleTrade(l)) sale(l, l.quantity - o.quantity, at);
+    if (o.quantity < l.quantity && plausibleTrade(l, seen)) sale(l, l.quantity - o.quantity, at);
     return o.price === l.price ? "withdrawn" : "repriced";
   };
 
@@ -184,7 +191,7 @@ function syncMerchant(m: Merchant, stats: Stats) {
       const o = relisting(l);
       if (o) reason = resolveRelisted(l, o, seen);
       // Not back yet: wait SALE_CONFIRM_MS before calling it a sale (see confirmPendingSales).
-      else reason = plausibleTrade(l) ? "pending" : "withdrawn";
+      else reason = plausibleTrade(l, seen) ? "pending" : "withdrawn";
     }
     stmts.close.run(seen, reason, l.id);
     stats.closed++;
@@ -267,8 +274,12 @@ function confirmPendingSales(at: number, stats: Stats) {
 /**
  * Applies one /merchants snapshot taken at `at` (ms). Deterministic given the database state and the
  * snapshot, so replaying the raw archive in order reproduces what live polling recorded.
+ *
+ * `prices: false` skips recomputing the hour's price index. Only the last snapshot of each hour
+ * determines it, and nothing during ingest reads the current hour's prices, so a rebuild skips it for
+ * all but each hour's last snapshot. Live polling always recomputes so the site stays current.
  */
-export function ingest(merchants: Merchant[], at: number): Stats & { priced: number } {
+export function ingest(merchants: Merchant[], at: number, { prices = true } = {}): Stats & { priced: number } {
   const stats: Stats = { updated: 0, opened: 0, closed: 0, sales: 0 };
   return transaction(() => {
     for (const m of merchants) syncMerchant(m, stats);
@@ -284,7 +295,7 @@ export function ingest(merchants: Merchant[], at: number): Stats & { priced: num
     }
 
     confirmPendingSales(at, stats);
-    const priced = recomputePrices(at);
+    const priced = prices ? recomputePrices(at) : 0;
     stmts.logPoll.run(at, merchants.length, stats.updated, stats.opened, stats.closed, null);
     return { ...stats, priced };
   });

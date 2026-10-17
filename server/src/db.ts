@@ -71,6 +71,9 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS listings_open ON listings (merchant) WHERE closed_at IS NULL;
   CREATE INDEX IF NOT EXISTS listings_item ON listings (item, level, variant, closed_at);
+  -- Vanished listings awaiting sale confirmation: few at a time, looked up per merchant every poll.
+  CREATE INDEX IF NOT EXISTS listings_pending_merchant ON listings (merchant, closed_at) WHERE close_reason = 'pending';
+  CREATE INDEX IF NOT EXISTS listings_pending_due ON listings (closed_at) WHERE close_reason = 'pending';
 
   -- Hourly price index per item/level/variant and region, recomputed from open listings on every poll.
   CREATE TABLE IF NOT EXISTS price_history (

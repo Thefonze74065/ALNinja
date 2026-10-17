@@ -114,7 +114,7 @@ On startup the container rebuilds before it begins serving and polling, and reco
 
 If it says `rebuild: not requested`, the variable didn't reach the container. In Dockge, put it in
 the compose file's `environment:`; the separate `.env` box only feeds `${VAR}` substitution in the YAML.
-Expect a few minutes per month of history. From a shell instead:
+Expect roughly 3 minutes per month of history at 2-minute polling (under a minute at 10-minute polling). From a shell instead:
 `docker compose stop alninja && docker compose run --rm alninja node server/src/rebuild.ts && docker compose start alninja`.
 
 The rebuild writes a new database and CSV archive beside the live ones, swaps them in only when complete,
