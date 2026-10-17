@@ -2,6 +2,7 @@
   "name": "alninja",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Economy and price tracker for Adventure Land, built on ALData",
   "type": "module",
   "engines": {

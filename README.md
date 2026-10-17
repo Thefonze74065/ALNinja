@@ -103,3 +103,8 @@ endpoints serve the web UI and can change at any time.
 In-game code runs on https://adventure.land, so browsers only allow it to call an **HTTPS** API.
 To use ALNinja from in-game code, expose it over HTTPS (e.g. Cloudflare Tunnel or a reverse proxy) and
 set `TRUST_PROXY=true`. Node bots can call it over plain http.
+
+## License
+
+[MIT](LICENSE). Not affiliated with Adventure Land. Item names and sprites belong to the game and are
+loaded from adventure.land at runtime, not distributed with this project.
