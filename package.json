@@ -1,0 +1,25 @@
+{
+  "name": "alninja",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Economy and price tracker for Adventure Land, built on ALData",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node server/src/index.ts",
+    "dev": "node --watch server/src/index.ts",
+    "poll": "node server/src/index.ts --poll-once",
+    "typecheck": "tsc -p server && tsc -p web",
+    "build": "npm --prefix web run build"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.2"
+  }
+}

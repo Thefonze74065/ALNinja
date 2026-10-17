@@ -1,0 +1,16 @@
+services:
+  alninja:
+    build: .
+    image: alninja:latest
+    container_name: alninja
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      POLL_INTERVAL_MINUTES: 10
+      FRESH_HOURS: 48
+      ARCHIVE_RAW: "true"
+    volumes:
+      # On TrueNAS, point this at a dataset, e.g. /mnt/tank/apps/alninja:/data
+      # The container runs as uid 1000 (node), so that dataset must be writable by it.
+      - ./data:/data
