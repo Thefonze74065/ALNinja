@@ -9,12 +9,22 @@ services:
     # remove this line to use the image default (1000:1000).
     user: "568:568"
     restart: unless-stopped
+    # Hardening: the app only writes to /data (and /tmp).
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "8080:8080"
     environment:
       POLL_INTERVAL_MINUTES: 10
       FRESH_HOURS: 48
       ARCHIVE_RAW: "true"
+      # Behind Cloudflare (incl. a Cloudflare Tunnel) set this, or every visitor shares one rate limit.
+      # TRUST_PROXY: cloudflare
       # Set (or change) to replay the raw archive into a fresh database on the next start; see README.
       # REBUILD: "1"
     volumes:

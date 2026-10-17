@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { secureHeaders } from "hono/secure-headers";
 import path from "node:path";
 import { api } from "./api.ts";
 import { maintain } from "./archive.ts";
@@ -33,6 +34,29 @@ pollLoop();
 setInterval(refreshGameData, 24 * 3_600_000);
 
 const app = new Hono();
+// Read-only public site: lock the page to its own scripts/styles, game sprites from adventure.land,
+// and API calls to itself. No framing, no sniffing, HTTPS remembered (ignored over plain http).
+app.use(
+  "*",
+  secureHeaders({
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https://adventure.land"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      baseUri: ["'none'"],
+      formAction: ["'none'"],
+      frameAncestors: ["'none'"],
+    },
+    strictTransportSecurity: "max-age=31536000",
+    referrerPolicy: "strict-origin-when-cross-origin",
+    // The API is meant to be called from other sites (CORS), so don't restrict resource loading.
+    crossOriginResourcePolicy: "cross-origin",
+  }),
+);
 // Open to any origin so in-game code (running on adventure.land) and other tools can call it.
 app.use("/api/*", cors({ origin: "*", allowMethods: ["GET"] }), rateLimit);
 app.route("/api/v1", v1);

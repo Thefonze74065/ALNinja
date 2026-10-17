@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { readText } from "./aldata.ts";
 import { config } from "./config.ts";
 
 export interface ItemMeta {
@@ -121,7 +122,7 @@ export async function refreshGameData(): Promise<void> {
   try {
     const res = await fetch(config.gameDataUrl, { signal: AbortSignal.timeout(60_000) });
     if (!res.ok) throw new Error(`responded ${res.status}`);
-    const text = await res.text();
+    const text = await readText(res, 64 * 1024 * 1024); // ~3 MB today
     // data.js is `var G={...};` — strip the assignment to get the JSON.
     const G = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
     meta = build(G);

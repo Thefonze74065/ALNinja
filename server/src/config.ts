@@ -29,6 +29,10 @@ export const config = {
   hourlyRetentionDays: Math.max(8, num("HOURLY_RETENTION_DAYS", 90)),
   // Per-IP request budget for /api; 0 disables limiting.
   rateLimitPerMinute: num("RATE_LIMIT_PER_MINUTE", 120),
-  // Behind a reverse proxy / tunnel, take the client IP from X-Forwarded-For.
-  trustProxy: process.env.TRUST_PROXY === "true",
+  // Where the client IP comes from, for rate limiting:
+  //   "false"      the TCP peer (direct exposure)
+  //   "cloudflare" the CF-Connecting-IP header (behind Cloudflare / cloudflared; Cloudflare overwrites it)
+  //   "true"       the last X-Forwarded-For entry, i.e. the one added by the nearest proxy
+  trustProxy: (["cloudflare", "true"].includes(process.env.TRUST_PROXY ?? "") ? process.env.TRUST_PROXY : "false") as
+    "false" | "cloudflare" | "true",
 };

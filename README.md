@@ -81,7 +81,7 @@ The included compose file sets `user: "568:568"`, TrueNAS SCALE's `apps` user, f
 | `REBUILD` | (unset) | Rebuild from the raw archive on startup, once per distinct value |
 | `HOURLY_RETENTION_DAYS` | `90` | Hourly price rows kept in the database (min 8); older ones live in the CSV archive |
 | `RATE_LIMIT_PER_MINUTE` | `120` | Per-IP request budget for `/api` (0 disables) |
-| `TRUST_PROXY` | `false` | Use `X-Forwarded-For` for client IPs (set when behind a reverse proxy/tunnel) |
+| `TRUST_PROXY` | `false` | How to find the client IP for rate limiting: `cloudflare` (behind Cloudflare or a Cloudflare Tunnel: uses `CF-Connecting-IP`), `true` (other reverse proxies: the last `X-Forwarded-For` entry), `false` (exposed directly). Behind a proxy, leaving it `false` makes every visitor share one limit |
 | `ALDATA_URL` | `https://aldata.earthiverse.ca` | |
 | `DATA_DIR` | `/data` (container), `./data` (local) | |
 
@@ -145,7 +145,17 @@ endpoints serve the web UI and can change at any time.
 
 In-game code runs on https://adventure.land, so browsers only allow it to call an **HTTPS** API.
 To use ALNinja from in-game code, expose it over HTTPS (e.g. Cloudflare Tunnel or a reverse proxy) and
-set `TRUST_PROXY=true`. Node bots can call it over plain http.
+set `TRUST_PROXY` (`cloudflare` for Cloudflare). Node bots can call it over plain http.
+
+## Security
+
+The site is read-only and has no accounts or secrets. All SQL is parameterized, archive downloads are
+validated against the archive directory, and player-supplied text is escaped by React (and neutralized
+against spreadsheet formulas in the CSV exports). Responses carry a strict Content-Security-Policy, plus
+anti-framing, `nosniff`, HSTS and referrer headers. The API is rate-limited per client IP: set
+`TRUST_PROXY` correctly when behind a proxy. The compose file runs the container as a non-root user with
+a read-only filesystem, no Linux capabilities and `no-new-privileges`. Report security issues privately
+through GitHub's "Report a vulnerability" on the repository.
 
 ## License
 

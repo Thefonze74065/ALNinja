@@ -10,10 +10,15 @@ setInterval(() => {
   for (const [ip, w] of windows) if (w.start < cutoff) windows.delete(ip);
 }, MINUTE).unref();
 
-function clientIp(c: Parameters<MiddlewareHandler>[0]): string {
-  if (config.trustProxy) {
-    const forwarded = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
-    if (forwarded) return forwarded;
+export function clientIp(c: Parameters<MiddlewareHandler>[0]): string {
+  if (config.trustProxy === "cloudflare") {
+    const ip = c.req.header("cf-connecting-ip")?.trim();
+    if (ip) return ip;
+  } else if (config.trustProxy === "true") {
+    // Clients can put anything at the start of X-Forwarded-For; only the entry appended by the
+    // nearest proxy is trustworthy.
+    const ip = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim();
+    if (ip) return ip;
   }
   return getConnInfo(c).remote.address ?? "unknown";
 }

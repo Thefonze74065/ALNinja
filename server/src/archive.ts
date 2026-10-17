@@ -51,7 +51,9 @@ const stmts = {
 
 const csvCell = (v: unknown) => {
   if (v == null) return "";
-  const s = String(v);
+  let s = String(v);
+  // Spreadsheets run text starting with these as formulas; neutralize it (numbers are left alone).
+  if (typeof v === "string" && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 };
 
