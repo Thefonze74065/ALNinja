@@ -70,6 +70,32 @@ describe("listing lifecycle", () => {
     assert.equal(salesOf("Reprice").length, 0);
   });
 
+  test("relisting at a new price in another slot is a reprice, not a sale (spores case)", () => {
+    const keep = { trade1: { name: "t_keep4", price: 1 } };
+    ingest([merchant("Velm", T0, { ...keep, trade12: { name: "t_spores", price: 143, q: 9999 } })], T0);
+    ingest([merchant("Velm", T0 + 3 * HOUR, { ...keep, trade9: { name: "t_spores", price: 168, q: 9999 } })], T0 + 3 * HOUR);
+    const rows = listingsOf("Velm").filter((l) => l.item === "t_spores");
+    assert.deepEqual(rows.map((l) => [l.slot, l.price, l.close_reason]), [["trade12", 143, "repriced"], ["trade9", 168, null]]);
+    assert.equal(salesOf("Velm").length, 0);
+  });
+
+  test("a relisted smaller stack counts the difference as sold", () => {
+    const keep = { trade1: { name: "t_keep5", price: 1 } };
+    ingest([merchant("Shrink", T0, { ...keep, trade2: { name: "t_shrink", price: 100, q: 10 } })], T0);
+    ingest([merchant("Shrink", T0 + HOUR, { ...keep, trade5: { name: "t_shrink", price: 90, q: 6 } })], T0 + HOUR);
+    assert.deepEqual(salesOf("Shrink").map((s) => [s.price, s.quantity]), [[100, 4]]);
+    assert.equal(listingsOf("Shrink").find((l) => l.price === 100).close_reason, "repriced");
+  });
+
+  test("one relisting explains only one vanished stack", () => {
+    const keep = { trade1: { name: "t_keep6", price: 1 } };
+    ingest([merchant("Two", T0, { ...keep, trade2: { name: "t_two", price: 100 }, trade3: { name: "t_two", price: 110 } })], T0);
+    ingest([merchant("Two", T0 + HOUR, { ...keep, trade4: { name: "t_two", price: 120 } })], T0 + HOUR);
+    const closed = listingsOf("Two").filter((l) => l.item === "t_two" && l.closed_at != null);
+    assert.deepEqual(closed.map((l) => l.close_reason).sort(), ["gone", "repriced"]);
+    assert.equal(salesOf("Two").length, 1);
+  });
+
   test("moving the same offer to another slot keeps the listing", () => {
     ingest([merchant("Move", T0, { trade1: { name: "t_move", price: 100 } })], T0);
     ingest([merchant("Move", T0 + HOUR, { trade7: { name: "t_move", price: 100 } })], T0 + HOUR);

@@ -148,10 +148,21 @@ function syncMerchant(m: Merchant, stats: Stats) {
 
   // A stand that emptied completely was packed up, not sold out between two polls.
   const standClosed = current.length === 0 && gone.length >= 3;
+  // New offers that already account for a vanished listing; each can explain only one.
+  const relistings = new Set<Offer>();
   for (const l of gone) {
-    const reason = standClosed || !plausibleTrade(l)
-      ? "withdrawn"
-      : current.some((o) => sameOffer(o, l)) ? "repriced" : "gone";
+    // The same goods listed anew at a different price, in any slot, in this same update: a reprice.
+    // If the new stack is smaller, the difference sold first.
+    const relisted = standClosed
+      ? undefined
+      : current.find((o) => unmatched.has(o) && !relistings.has(o) && sameGoods(o, l));
+    let reason: string;
+    if (standClosed) reason = "withdrawn";
+    else if (relisted) {
+      relistings.add(relisted);
+      reason = "repriced";
+      if (relisted.quantity < l.quantity && plausibleTrade(l)) sale(l, l.quantity - relisted.quantity);
+    } else reason = plausibleTrade(l) ? "gone" : "withdrawn";
     stmts.close.run(seen, reason, l.id);
     if (reason === "gone") sale(l, l.quantity);
     stats.closed++;
