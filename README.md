@@ -100,7 +100,17 @@ apps and similar UIs):
 ```
 
 On startup the container rebuilds before it begins serving and polling, and records the value in
-`/data/.rebuild-done`, so leaving the variable set doesn't repeat it. Progress shows in the container log.
+`/data/.rebuild-done`, so leaving the variable set doesn't repeat it. The log always reports it:
+
+```
+[startup] ALNinja 5c5e1f2
+[startup] rebuild: REBUILD=2 requested; rebuilding before the server starts
+[rebuild] ✔ REBUILT in 41s: 5214 snapshots (…) -> 48120 listings, 3911 sales, …
+[startup] rebuild: REBUILD=2 complete; starting the server on the rebuilt database
+```
+
+If it says `rebuild: not requested`, the variable didn't reach the container. In Dockge, put it in
+the compose file's `environment:`; the separate `.env` box only feeds `${VAR}` substitution in the YAML.
 Expect a few minutes per month of history. From a shell instead:
 `docker compose stop alninja && docker compose run --rm alninja node server/src/rebuild.ts && docker compose start alninja`.
 

@@ -26,6 +26,7 @@ api.get("/meta", (c) => {
 
 api.get("/status", (c) => {
   return c.json({
+    version: (process.env.ALNINJA_VERSION || "dev").slice(0, 7),
     lastPoll: stmts.lastPoll.get() ?? null,
     lastSuccessfulPoll: stmts.lastGoodPoll.get() ?? null,
     pollIntervalMinutes: config.pollIntervalMinutes,

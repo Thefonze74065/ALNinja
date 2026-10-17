@@ -8,7 +8,10 @@ RUN npm run build
 
 # --- Runtime: Node runs the TypeScript server directly (type stripping + built-in SQLite) ---
 FROM node:24-slim
-ENV NODE_ENV=production \
+# Set by CI to the commit being built; logged at startup and reported by /api/status.
+ARG ALNINJA_VERSION=dev
+ENV ALNINJA_VERSION=$ALNINJA_VERSION \
+    NODE_ENV=production \
     DATA_DIR=/data \
     WEB_DIR=/app/web/dist \
     PORT=8080 \

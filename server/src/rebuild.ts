@@ -112,6 +112,18 @@ for (const suffix of ["-wal", "-shm"]) fs.rmSync(newDb + suffix, { force: true }
 if (fs.existsSync(liveArchive)) fs.renameSync(liveArchive, `${liveArchive}.bak-${stamp}`);
 if (fs.existsSync(newArchive)) fs.renameSync(newArchive, liveArchive);
 
-console.log(`[rebuild] done in ${Math.round((performance.now() - started) / 1000)}s`, counts,
-  `archived ${archived.exported} day(s), skipped ${skipped} unreadable snapshot(s)`);
+const c = counts as Record<string, number>;
+const day = (t: number) => new Date(t).toISOString().slice(0, 16).replace("T", " ");
+const summary = `${snapshots.length - skipped} snapshots (${day(snapshots[0].at)} to ` +
+  `${day(snapshots[snapshots.length - 1].at)} UTC) -> ${c.listings} listings, ${c.sales} sales, ` +
+  `${c.hourly} hourly + ${c.daily} daily prices, ${archived.exported} day(s) archived` +
+  (skipped ? `, ${skipped} unreadable snapshot(s) skipped` : "");
+console.log(`[rebuild] ✔ REBUILT in ${Math.round((performance.now() - started) / 1000)}s: ${summary}`);
 console.log(`[rebuild] previous database and archive kept as *.bak-${stamp}; delete them when satisfied.`);
+
+// Record the rebuild for startup logs (index.ts passes the REBUILD token it was started with).
+if (process.env.REBUILD_TOKEN) {
+  fs.writeFileSync(path.join(dataDir, ".rebuild-done"), JSON.stringify({
+    token: process.env.REBUILD_TOKEN, at: `${day(Date.now())} UTC`, summary,
+  }) + "\n");
+}
