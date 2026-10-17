@@ -59,5 +59,6 @@ api.get("/items/:item", (c) => {
     velocity: velocity(item, region, days),
     listings: openListings(item, region),
     sales: recentSales(item, region, Date.now() - days * DAY, 200),
+    trackingSince: (stmts.counts.get() as { tracking_since: number | null }).tracking_since,
   });
 });

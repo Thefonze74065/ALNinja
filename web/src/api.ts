@@ -82,7 +82,9 @@ export interface PriceBand {
 export interface Velocity {
   level: number;
   variant: string;
-  daily: { day: number; sold: number; bought: number; trades: number }[];
+  /** Trade slots are hours for ranges up to two days, UTC days beyond. */
+  bucket: "hour" | "day";
+  trades: { t: number; sold: number; bought: number; trades: number }[];
   bands: PriceBand[];
   medianHoursToSell: number | null;
 }
@@ -124,6 +126,7 @@ export interface ItemDetail {
   velocity: Velocity[];
   listings: Listing[];
   sales: Sale[];
+  trackingSince: number | null;
 }
 
 export interface Movers {

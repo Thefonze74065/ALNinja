@@ -75,10 +75,12 @@ const stmts = {
     FROM listings l JOIN merchants m ON m.id = l.merchant
     WHERE l.item = ?1 AND l.closed_at IS NULL AND (?2 = 'ALL' OR m.server_region = ?2)
     ORDER BY l.side, l.level, l.price`),
-  itemDailySales: db.prepare(`
-    SELECT level, variant, side, at / 86400000 AS day, COUNT(*) AS trades, SUM(quantity) AS units FROM sales
+  // Trades bucketed by ?4 ms (an hour or a day). Bound JS numbers arrive as REAL, so cast for
+  // integer division.
+  itemSalesBuckets: db.prepare(`
+    SELECT level, variant, side, at / CAST(?4 AS INTEGER) AS slot, COUNT(*) AS trades, SUM(quantity) AS units FROM sales
     WHERE item = ?1 AND (?2 = 'ALL' OR region = ?2) AND at >= ?3
-    GROUP BY level, variant, side, day ORDER BY day`),
+    GROUP BY level, variant, side, slot ORDER BY slot`),
   recentSales: db.prepare(`
     SELECT merchant, side, item, level, variant, region, price, quantity, listed_at, at FROM sales
     WHERE (?1 IS NULL OR item = ?1) AND (?2 = 'ALL' OR region = ?2) AND at >= ?3
@@ -301,28 +303,37 @@ const median = (xs: number[]) => {
   return s[Math.floor((s.length - 1) / 2)];
 };
 
-/** Sales per day and time-to-sell by price band (relative to market at listing time), per variant. */
+/**
+ * Trades over time and time-to-sell by price band (relative to market at listing time), per variant.
+ * Trades are per hour for ranges up to two days, per UTC day beyond that (`bucket`).
+ */
 export function velocity(item: string, region: string, days: number) {
   const since = Date.now() - days * DAY;
-  const result = new Map<string, { level: number; variant: string; daily: any[]; bands: any[]; medianHoursToSell: number | null }>();
+  const bucketMs = days <= 2 ? HOUR : DAY;
+  const bucket = bucketMs === HOUR ? "hour" : "day";
+  type Slot = { t: number; sold: number; bought: number; trades: number };
+  type Out = {
+    level: number; variant: string; bucket: string; trades: Slot[]; bands: any[]; medianHoursToSell: number | null;
+  };
+  const result = new Map<string, Out>();
   const get = (level: number, variant: string) => {
     const k = `${level}\u0000${variant}`;
-    if (!result.has(k)) result.set(k, { level, variant, daily: [], bands: [], medianHoursToSell: null });
+    if (!result.has(k)) result.set(k, { level, variant, bucket, trades: [], bands: [], medianHoursToSell: null });
     return result.get(k)!;
   };
 
-  const daily = new Map<string, Map<number, { day: number; sold: number; bought: number; trades: number }>>();
-  for (const r of stmts.itemDailySales.all(item, region, since) as any[]) {
+  const slots = new Map<string, Map<number, Slot>>();
+  for (const r of stmts.itemSalesBuckets.all(item, region, since, bucketMs) as any[]) {
     get(r.level, r.variant);
     const k = `${r.level}\u0000${r.variant}`;
-    const byDay = daily.get(k) ?? daily.set(k, new Map()).get(k)!;
-    const d = byDay.get(r.day) ?? { day: r.day * DAY, sold: 0, bought: 0, trades: 0 };
+    const bySlot = slots.get(k) ?? slots.set(k, new Map()).get(k)!;
+    const d = bySlot.get(r.slot) ?? { t: r.slot * bucketMs, sold: 0, bought: 0, trades: 0 };
     if (r.side === "sell") d.sold += r.units;
     else d.bought += r.units;
     d.trades += r.trades;
-    byDay.set(r.day, d);
+    bySlot.set(r.slot, d);
   }
-  for (const [k, byDay] of daily) result.get(k)!.daily = [...byDay.values()];
+  for (const [k, bySlot] of slots) result.get(k)!.trades = [...bySlot.values()];
 
   const outcomes = new Map<string, any[]>();
   for (const l of stmts.listingOutcomes.all(item, region, since) as any[]) {

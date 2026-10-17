@@ -211,3 +211,19 @@ describe("NPC shop prices", () => {
     assert.equal(l.close_reason, "withdrawn");
   });
 });
+
+describe("velocity", () => {
+  test("trades land on whole hour / UTC day boundaries", () => {
+    const t = now - 3 * HOUR;
+    ingest([merchant("VelA", t, { trade1: { name: "t_vel", price: 100, q: 10 } })], t);
+    ingest([merchant("VelA", t + HOUR, { trade1: { name: "t_vel", price: 100, q: 6 } })], t + HOUR);
+    const DAY = 24 * HOUR;
+    const [daily] = app.market.velocity("t_vel", "ALL", 7);
+    assert.equal(daily.bucket, "day");
+    assert.equal(daily.trades[0].t % DAY, 0);
+    assert.equal(daily.trades[0].sold, 4);
+    const [hourly] = app.market.velocity("t_vel", "ALL", 1);
+    assert.equal(hourly.bucket, "hour");
+    assert.equal(hourly.trades[0].t, Math.floor((t + HOUR) / HOUR) * HOUR);
+  });
+});

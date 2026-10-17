@@ -14,7 +14,8 @@ const RANGES = [
   { label: "1y", days: 365 },
 ];
 
-const DAY = 86_400_000;
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
 const count = (v: number | null) => (v == null ? "—" : String(Math.round(v)));
 const sameVariant = (a: { level: number; variant: string }, b: { level: number; variant: string } | null) =>
   b != null && a.level === b.level && a.variant === b.variant;
@@ -30,7 +31,18 @@ export function ItemPage({
   meta: GameMeta | null;
   region: string;
 }) {
-  const [days, setDays] = useState(7);
+  // The range lives in the URL (?days=1) so views can be linked; changing it rewrites the URL in place.
+  const [days, setDaysState] = useState(() => {
+    const d = Number(params.get("days"));
+    return RANGES.some((r) => r.days === d) ? d : 7;
+  });
+  const setDays = (d: number) => {
+    setDaysState(d);
+    const [path, query = ""] = location.hash.split("?");
+    const q = new URLSearchParams(query);
+    q.set("days", String(d));
+    history.replaceState(null, "", `${path}?${q}`);
+  };
   const [detail, setDetail] = useState<ItemDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,7 +90,8 @@ export function ItemPage({
       ...(shop != null ? [{ label: "NPC shop", color: "--text-muted", values: h.map(() => shop), dash: true }] : []),
     ];
     const merchants: Series[] = [
-      { label: "Merchants selling", color: "--series-1", values: h.map((p) => p.sellers), bars: true },
+      { label: "Merchants selling", color: "--series-1", values: h.map((p) => p.sellers), style: "steps" },
+      { label: "Merchants buying", color: "--series-2", values: h.map((p) => p.buyers), style: "steps" },
     ];
     const latest = h[h.length - 1];
     const first = h.find((p) => p.sellers && p.price != null);
@@ -97,25 +110,31 @@ export function ItemPage({
 
   const velocity = useMemo(() => detail?.velocity.find((v) => sameVariant(v, selected)) ?? null, [detail, selected]);
 
-  // Daily trade bars over the whole range, with empty days filled in.
+  // Trade bars per hour (short ranges) or UTC day, from the later of the range start and the start of
+  // tracking (earlier periods weren't observed, so they aren't zeros), with quiet periods filled in.
   const trades = useMemo(() => {
-    if (!velocity && !detail) return null;
-    const byDay = new Map((velocity?.daily ?? []).map((d) => [d.day, d]));
-    const today = Math.floor(Date.now() / DAY) * DAY;
+    if (!detail) return null;
+    const hourly = days <= 2;
+    const step = hourly ? HOUR : DAY;
+    const bySlot = new Map((velocity?.trades ?? []).map((d) => [d.t, d]));
+    const now = Math.floor(Date.now() / step) * step;
+    const tracked = detail.trackingSince != null ? Math.floor(detail.trackingSince / step) * step : now;
+    const start = Math.max(now - (hourly ? days * 24 - 1 : days - 1) * step, tracked);
     const times: number[] = [];
-    for (let t = today - (Math.max(days, 1) - 1) * DAY; t <= today; t += DAY) times.push(t);
-    const sold = times.map((t) => byDay.get(t)?.sold ?? 0);
-    const bought = times.map((t) => byDay.get(t)?.bought ?? 0);
+    for (let t = start; t <= now; t += step) times.push(t);
+    const sold = times.map((t) => bySlot.get(t)?.sold ?? 0);
+    const bought = times.map((t) => bySlot.get(t)?.bought ?? 0);
     const totalSold = sold.reduce((a, b) => a + b, 0);
     const totalBought = bought.reduce((a, b) => a + b, 0);
-    // Only show the buy-order series when there is one; a lone series fills the whole day.
+    // Only show the buy-order series when there is one; a lone series fills the whole slot.
     const series: Series[] = totalBought
       ? [
-          { label: "Sold by merchants", color: "--series-1", values: sold, bars: true, barAlign: -1 },
-          { label: "Bought via buy orders", color: "--series-2", values: bought, bars: true, barAlign: 1 },
+          { label: "Sold by merchants", color: "--series-1", values: sold, style: "bars", barAlign: -1 },
+          { label: "Bought via buy orders", color: "--series-2", values: bought, style: "bars", barAlign: 1 },
         ]
-      : [{ label: "Sold by merchants", color: "--series-1", values: sold, bars: true }];
-    return { times, series, totalSold, totalBought };
+      : [{ label: "Sold by merchants", color: "--series-1", values: sold, style: "bars" }];
+    const coveredDays = Math.max((Date.now() - start) / DAY, 1);
+    return { times, series, totalSold, totalBought, hourly, clipped: start > now - (days - 1) * DAY, coveredDays };
   }, [velocity, detail, days]);
 
   const listings = useMemo(
@@ -184,7 +203,9 @@ export function ItemPage({
             <div className="stat">
               <div className="stat-label">Sold ({rangeLabel})</div>
               <div className="stat-value">{trades ? gold(trades.totalSold) : "—"}</div>
-              <div className="stat-sub muted">{trades && trades.totalSold ? `${perDay(trades.totalSold / days)} / day` : "units"}</div>
+              <div className="stat-sub muted">
+                {trades && trades.totalSold ? `${perDay(trades.totalSold / trades.coveredDays)} / day` : "units"}
+              </div>
             </div>
             <div className="stat">
               <div className="stat-label">Bought by buy orders</div>
@@ -205,7 +226,13 @@ export function ItemPage({
 
           <div className="panel">
             <h2>Price</h2>
-            <TimeChart times={chart.times} series={chart.price} format={gold} />
+            <TimeChart
+              times={chart.times}
+              series={chart.price}
+              format={gold}
+              resolution="hour"
+              hourlyFrom={selected.hourlyFrom}
+            />
             {chart.times.length > 0 && chart.times[0] < selected.hourlyFrom && (
               <p className="muted small">
                 Daily closes before {new Date(selected.hourlyFrom).toLocaleDateString()}, hourly after. Full hourly
@@ -215,9 +242,26 @@ export function ItemPage({
           </div>
           {trades && (
             <div className="panel">
-              <h2>Trades per day</h2>
-              <p className="muted small">Estimated units traded at stands each day (UTC).</p>
-              <TimeChart times={trades.times} series={trades.series} format={count} height={180} daily />
+              <h2>Trades per {trades.hourly ? "hour" : "day"}</h2>
+              <p className="muted small">
+                Estimated units traded at stands each {trades.hourly ? "hour" : "day (UTC)"}
+                {trades.clipped && detail?.trackingSince
+                  ? `, since tracking began ${new Date(detail.trackingSince).toLocaleDateString()}`
+                  : ""}
+                .
+              </p>
+              {trades.totalSold + trades.totalBought > 0 ? (
+                <TimeChart
+                  times={trades.times}
+                  series={trades.series}
+                  format={count}
+                  height={180}
+                  resolution={trades.hourly ? "hour" : "day"}
+                  counts
+                />
+              ) : (
+                <p className="muted">No trades recorded in this range.</p>
+              )}
             </div>
           )}
           <div className="panel">
@@ -261,8 +305,16 @@ export function ItemPage({
             )}
           </div>
           <div className="panel">
-            <h2>Merchants selling</h2>
-            <TimeChart times={chart.times} series={chart.merchants} format={count} height={140} />
+            <h2>Merchants</h2>
+            <TimeChart
+              times={chart.times}
+              series={chart.merchants}
+              format={count}
+              height={160}
+              resolution="hour"
+              hourlyFrom={selected.hourlyFrom}
+              counts
+            />
           </div>
         </>
       )}
