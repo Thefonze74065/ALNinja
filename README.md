@@ -26,8 +26,17 @@ history, so ALNinja keeps its own:
    priced near the market count: sells at most 3× the market price, buy orders at least ⅓ of it, and nothing at
    placeholder prices (10b+). A stand emptying all at once is `withdrawn`, not a sell-out. Sales feed
    sold-per-day figures, the most-traded list, and each item's time-to-sell by price band.
-4. **Raw archive**: every raw response is saved gzipped under `data/raw/YYYY-MM-DD/`, so you
-   can reprocess history later if the pricing logic changes (~3 MB/day at 10-minute polls).
+4. **Deals**: buyable listings worth more elsewhere. **npc**: an NPC pays more than the asking price
+   (NPC value is a port of the game's own `calculate_item_value`, including upgrade/compound levels,
+   gifted items paying 1 gold and temporary ones 1/8). **flip**: another merchant's buy order pays more
+   than this ask. **underpriced**: well under the cheapest competing seller (a resale estimate).
+5. **Daily archive and retention**: each completed UTC day, every hourly price row and every sale is
+   written to `data/archive/{prices,sales}/YYYY/YYYY-MM-DD.csv.gz`. These files are kept forever and can be
+   downloaded through the API. The day is also summarized into `price_daily`. Hourly rows older than
+   `HOURLY_RETENTION_DAYS` are then removed from the database (only once archived); long-range charts use
+   the daily summaries.
+6. **Raw archive**: every raw `/merchants` response is saved gzipped under `data/raw/YYYY-MM-DD/`
+   (~3 MB/day at 10-minute polls). This is the source of truth for [rebuilding](#rebuilding-from-the-raw-archive).
 
 Item names, categories and sprite icons come from the game's own `https://adventure.land/data.js`,
 refreshed daily and cached in `data/gamedata.json`.
@@ -54,6 +63,9 @@ Then open `http://<host>:8080`. Price history starts from your first poll, becau
 to backfill from. Everything lives in the `/data` volume (SQLite database, game-data cache, raw archive),
 so keep it on persistent storage and back it up.
 
+Storage grows by roughly 1 GB/year of raw archive plus ~150 MB/year of daily CSVs. The database stays
+small because hourly rows are retired.
+
 **Bind mounts and permissions:** the image runs as uid/gid `1000:1000`. If you mount a host directory,
 it must be writable by the container's user, or the app exits with "Data directory … is not writable".
 The included compose file sets `user: "568:568"`, TrueNAS SCALE's `apps` user, for a dataset such as
@@ -66,10 +78,28 @@ The included compose file sets `user: "568:568"`, TrueNAS SCALE's `apps` user, f
 | `POLL_INTERVAL_MINUTES` | `10` | How often to poll ALData |
 | `FRESH_HOURS` | `48` | Ignore merchants not seen by ALData for longer than this |
 | `ARCHIVE_RAW` | `true` | Keep gzipped raw `/merchants` responses |
+| `HOURLY_RETENTION_DAYS` | `90` | Hourly price rows kept in the database (min 8); older ones live in the CSV archive |
 | `RATE_LIMIT_PER_MINUTE` | `120` | Per-IP request budget for `/api` (0 disables) |
 | `TRUST_PROXY` | `false` | Use `X-Forwarded-For` for client IPs (set when behind a reverse proxy/tunnel) |
 | `ALDATA_URL` | `https://aldata.earthiverse.ca` | |
 | `DATA_DIR` | `/data` (container), `./data` (local) | |
+
+### Rebuilding from the raw archive
+
+When the collector's rules change (how sales are detected, how prices are indexed), the rebuild
+replays every raw snapshot through the current code. Fixing a rule then fixes all history, not just
+future polls. Replaying reproduces live polling exactly; this was checked row by row.
+
+```sh
+docker compose stop alninja
+docker compose run --rm alninja node server/src/rebuild.ts
+docker compose start alninja
+```
+
+The rebuild writes a new database and CSV archive beside the live ones, swaps them in only when complete,
+and keeps the previous ones as `*.bak-<timestamp>` for you to delete once satisfied. It refuses to run if
+the server looks like it's still polling, or if the raw archive covers fewer polls than the database
+(e.g. `ARCHIVE_RAW` was off for a while). `--force` overrides both checks.
 
 ## Development
 
@@ -81,7 +111,9 @@ npm install && npm --prefix web install
 npm run dev              # API + collector on :8080
 npm --prefix web run dev # UI on :5173, proxies /api to :8080
 npm run poll             # run a single poll and exit
+npm test                 # node:test suite (collector rules, prices, deals, archive)
 npm run typecheck
+npm run rebuild          # replay data/raw into a fresh database (see above)
 ```
 
 ## API
@@ -92,10 +124,12 @@ Scripts and bots should use the versioned public API. It's documented in the app
 
 - `GET /api/v1/prices?items=a,b&min_sellers=3`: current prices
 - `GET /api/v1/prices/:item`: every level/variant of one item
-- `GET /api/v1/history/:item?days=7&level=2`: hourly history
+- `GET /api/v1/history/:item?days=7&level=2`: price history (hourly; daily closes beyond the retention window)
 - `GET /api/v1/listings/:item?side=sell`: open listings with server, map and coordinates
 - `GET /api/v1/sales?item=&hours=24`: recent estimated sales
 - `GET /api/v1/movers?window=24h|7d`: biggest risers/fallers and most traded
+- `GET /api/v1/deals?kind=npc,flip,underpriced`: listings worth buying now
+- `GET /api/v1/archive`: daily CSV files (all hourly prices, all sales) for bulk analysis
 
 v1 shapes are stable: fields may be added, but not renamed or removed. The unversioned `/api/*`
 endpoints serve the web UI and can change at any time.

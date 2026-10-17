@@ -15,7 +15,7 @@ export const config = {
   dataDir,
   dbPath: path.resolve(process.env.DB_PATH ?? path.join(dataDir, "alninja.sqlite")),
   rawDir: path.join(dataDir, "raw"),
-  archiveDir: path.join(dataDir, "archive"),
+  archiveDir: path.resolve(process.env.ARCHIVE_DIR ?? path.join(dataDir, "archive")),
   webDir: path.resolve(process.env.WEB_DIR ?? "./web/dist"),
   aldataUrl: (process.env.ALDATA_URL ?? "https://aldata.earthiverse.ca").replace(/\/$/, ""),
   gameDataUrl: process.env.GAME_DATA_URL ?? "https://adventure.land/data.js",

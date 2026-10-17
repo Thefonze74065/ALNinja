@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 const ENDPOINTS = [
   {
     path: "/api/v1/prices",
@@ -35,6 +37,18 @@ const ENDPOINTS = [
     desc: "Biggest risers and fallers, plus the most traded items.",
     example: "/api/v1/movers?window=24h",
   },
+  {
+    path: "/api/v1/deals",
+    params: "region, kind=npc,underpriced,flip, min_discount=0.2, min_sellers=3, min_profit=1, sort=profit|discount, limit=100",
+    desc: "Listings worth buying now: NPC pays more, another merchant bids more, or well under the next seller.",
+    example: "/api/v1/deals?kind=npc",
+  },
+  {
+    path: "/api/v1/archive",
+    params: "",
+    desc: "Daily gzipped CSVs of every hourly price row and every sale, for bulk analysis. Each file links to its download.",
+    example: "/api/v1/archive",
+  },
 ];
 
 const FIELDS: [string, string][] = [
@@ -47,6 +61,76 @@ const FIELDS: [string, string][] = [
   ["soldPerDay / boughtPerDay", "Estimated units traded per day, 7-day average."],
   ["level / variant", "Upgrade/compound level, and variant such as shiny or a cxjar's contents (\"\" for plain)."],
 ];
+
+interface ArchiveFile {
+  kind: "prices" | "sales";
+  date: string;
+  bytes: number;
+  url: string;
+}
+
+function BulkData() {
+  const [files, setFiles] = useState<ArchiveFile[] | null>(null);
+  const [retention, setRetention] = useState<number | null>(null);
+  useEffect(() => {
+    fetch("/api/v1/archive")
+      .then((r) => r.json())
+      .then((d) => {
+        setFiles(d.files);
+        setRetention(d.hourlyRetentionDays);
+      }, () => setFiles([]));
+  }, []);
+  const prices = (files ?? []).filter((f) => f.kind === "prices").reverse();
+  const salesByDate = new Map((files ?? []).filter((f) => f.kind === "sales").map((f) => [f.date, f]));
+  const total = (files ?? []).reduce((a, f) => a + f.bytes, 0);
+  const size = (b: number) => (b > 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
+
+  return (
+    <div className="panel">
+      <h2>Bulk data</h2>
+      <p className="small">
+        Every completed UTC day is saved as two gzipped CSVs: <code>prices</code> (every hourly price row for every
+        item, level, variant and region) and <code>sales</code> (every estimated sale). They're kept permanently.
+        The live database keeps hourly rows for {retention ?? 90} days, so use these for longer-term analysis.
+      </p>
+      {files == null ? (
+        <p className="muted">Loading…</p>
+      ) : prices.length === 0 ? (
+        <p className="muted">No completed days yet. The first files appear shortly after midnight UTC.</p>
+      ) : (
+        <>
+          <p className="muted small">
+            {prices.length} day(s), {size(total)} total. Script it with <code>GET /api/v1/archive</code>.
+          </p>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Day (UTC)</th>
+                  <th>Prices</th>
+                  <th>Sales</th>
+                </tr>
+              </thead>
+              <tbody>
+                {prices.slice(0, 14).map((f) => {
+                  const sale = salesByDate.get(f.date);
+                  return (
+                    <tr key={f.date}>
+                      <td>{f.date}</td>
+                      <td><a href={f.url}>prices</a> <span className="muted">{size(f.bytes)}</span></td>
+                      <td>{sale && <><a href={sale.url}>sales</a> <span className="muted">{size(sale.bytes)}</span></>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {prices.length > 14 && <p className="muted small">Showing the latest 14 days; the API lists all.</p>}
+        </>
+      )}
+    </div>
+  );
+}
 
 export function ApiDocs() {
   const base = location.origin;
@@ -145,6 +229,7 @@ for (const p of prices) console.log(p.item, p.level, p.price, p.soldPerDay);`;
         <h2>Node example</h2>
         <pre><code>{node}</code></pre>
       </div>
+      <BulkData />
       <p className="footnote">
         Sales are estimates: a stack shrinking, or a listing disappearing while the rest of the stand stays up, priced
         within 3× of market (buy orders: at least ⅓ of market). Items parked at placeholder prices are ignored.
