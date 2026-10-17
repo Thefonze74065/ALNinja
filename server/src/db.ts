@@ -14,6 +14,15 @@ try {
 
 export const db = new DatabaseSync(config.dbPath);
 
+const priceHistoryColumns = db.prepare("PRAGMA table_info(price_history)").all() as { name: string }[];
+const migrating = priceHistoryColumns.length > 0 && !priceHistoryColumns.some((c) => c.name === "region");
+if (migrating) {
+  db.exec(`
+    DROP INDEX IF EXISTS price_history_bucket;
+    ALTER TABLE price_history RENAME TO price_history_v1;
+  `);
+}
+
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA synchronous = NORMAL;
@@ -62,9 +71,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS listings_open ON listings (merchant) WHERE closed_at IS NULL;
   CREATE INDEX IF NOT EXISTS listings_item ON listings (item, level, variant, closed_at);
 
-  -- Hourly price index per item/level/variant, recomputed from open listings on every poll.
+  -- Hourly price index per item/level/variant and region, recomputed from open listings on every poll.
   CREATE TABLE IF NOT EXISTS price_history (
     item        TEXT NOT NULL,
+    region      TEXT NOT NULL, -- 'ALL' or a server region (US, EU, ASIA)
     level       INTEGER NOT NULL,
     variant     TEXT NOT NULL,
     bucket      INTEGER NOT NULL, -- start of hour, ms
@@ -75,10 +85,25 @@ db.exec(`
     sell_count  INTEGER NOT NULL, -- distinct merchants selling
     buy_count   INTEGER NOT NULL, -- distinct merchants buying
     sell_qty    INTEGER NOT NULL,
-    PRIMARY KEY (item, level, variant, bucket)
+    PRIMARY KEY (item, region, level, variant, bucket)
   );
-  CREATE INDEX IF NOT EXISTS price_history_bucket ON price_history (bucket);
+  CREATE INDEX IF NOT EXISTS price_history_region_bucket ON price_history (region, bucket);
 `);
+
+// v0.1 price_history had no region: its rows were all-region prices, so they become region 'ALL'.
+if (migrating) {
+  transaction(() => {
+    db.exec(`
+      INSERT INTO price_history (item, region, level, variant, bucket, sell_min, sell_p25, sell_median, buy_max,
+        sell_count, buy_count, sell_qty)
+      SELECT item, 'ALL', level, variant, bucket, sell_min, sell_p25, sell_median, buy_max,
+        sell_count, buy_count, sell_qty
+      FROM price_history_v1;
+      DROP TABLE price_history_v1;
+    `);
+  });
+  console.log("[db] migrated price_history to per-region schema");
+}
 
 export function transaction<T>(fn: () => T): T {
   db.exec("BEGIN");

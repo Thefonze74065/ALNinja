@@ -21,18 +21,20 @@ interface PriceRow {
 }
 
 const stmts = {
-  history: db.prepare("SELECT * FROM price_history WHERE bucket >= ? ORDER BY bucket"),
-  itemHistory: db.prepare("SELECT * FROM price_history WHERE item = ? AND bucket >= ? ORDER BY bucket"),
+  history: db.prepare("SELECT * FROM price_history WHERE region = ? AND bucket >= ? ORDER BY bucket"),
+  itemHistory: db.prepare(
+    "SELECT * FROM price_history WHERE item = ? AND region = ? AND bucket >= ? ORDER BY bucket"),
   openListings: db.prepare(`
     SELECT l.merchant, l.side, l.level, l.variant, l.price, l.quantity, l.first_seen,
       m.last_seen, m.server_region, m.server_identifier, m.map, m.x, m.y
     FROM listings l JOIN merchants m ON m.id = l.merchant
-    WHERE l.item = ? AND l.closed_at IS NULL
+    WHERE l.item = ?1 AND l.closed_at IS NULL AND (?2 = 'ALL' OR m.server_region = ?2)
     ORDER BY l.side, l.level, l.price`),
   closedListings: db.prepare(`
     SELECT merchant, side, level, variant, price, initial_quantity, quantity, first_seen, closed_at,
       close_reason, server_region, server_identifier
-    FROM listings WHERE item = ? AND closed_at IS NOT NULL AND close_reason != 'expired'
+    FROM listings WHERE item = ?1 AND closed_at IS NOT NULL AND close_reason != 'expired'
+      AND (?2 = 'ALL' OR server_region = ?2)
     ORDER BY closed_at DESC LIMIT 100`),
   lastPoll: db.prepare("SELECT * FROM polls ORDER BY id DESC LIMIT 1"),
   lastGoodPoll: db.prepare("SELECT * FROM polls WHERE error IS NULL ORDER BY id DESC LIMIT 1"),
@@ -41,14 +43,22 @@ const stmts = {
            (SELECT COUNT(*) FROM listings) AS total_listings,
            (SELECT COUNT(*) FROM merchants) AS merchants,
            (SELECT MIN(fetched_at) FROM polls WHERE error IS NULL) AS tracking_since`),
+  regions: db.prepare(
+    "SELECT DISTINCT server_region AS region FROM merchants WHERE server_region IS NOT NULL ORDER BY 1"),
 };
+
+/** `?region=US` etc.; anything missing or malformed means all regions. */
+function regionParam(raw: string | undefined): string {
+  const region = (raw ?? "").toUpperCase();
+  return /^[A-Z]{1,8}$/.test(region) ? region : "ALL";
+}
 
 /** The price we headline: lowest-quartile ask, falling back to the best bid for buy-only items. */
 const headline = (r: PriceRow) => r.sell_p25 ?? r.buy_max;
 
-function overview() {
+function overview(region: string) {
   const now = Date.now();
-  const rows = stmts.history.all(now - 7 * DAY) as unknown as PriceRow[];
+  const rows = stmts.history.all(region, now - 7 * DAY) as unknown as PriceRow[];
   const byKey = new Map<string, PriceRow[]>();
   for (const r of rows) {
     const k = `${r.item}\u0000${r.level}\u0000${r.variant}`;
@@ -81,7 +91,8 @@ function overview() {
       change7d: price != null && firstPrice ? (price - firstPrice) / firstPrice : null,
       sparkline: [...daily.values()],
       updated: latest.bucket,
-      stale: latest.bucket < currentBucket,
+      // Previous hour still counts as current: the new hour has no bucket until the next poll.
+      stale: latest.bucket < currentBucket - HOUR,
     };
   });
 }
@@ -99,16 +110,18 @@ api.get("/status", (c) => {
     lastSuccessfulPoll: stmts.lastGoodPoll.get() ?? null,
     pollIntervalMinutes: config.pollIntervalMinutes,
     freshHours: config.freshHours,
+    regions: (stmts.regions.all() as { region: string }[]).map((r) => r.region),
     ...(stmts.counts.get() as object),
   });
 });
 
-api.get("/overview", (c) => c.json(overview()));
+api.get("/overview", (c) => c.json(overview(regionParam(c.req.query("region")))));
 
 api.get("/items/:item", (c) => {
   const item = c.req.param("item");
   const days = Math.min(Math.max(Number(c.req.query("days")) || 30, 1), 3650);
-  const rows = stmts.itemHistory.all(item, Date.now() - days * DAY) as unknown as PriceRow[];
+  const region = regionParam(c.req.query("region"));
+  const rows = stmts.itemHistory.all(item, region, Date.now() - days * DAY) as unknown as PriceRow[];
 
   const variants = new Map<string, { level: number; variant: string; history: unknown[] }>();
   for (const r of rows) {
@@ -122,9 +135,10 @@ api.get("/items/:item", (c) => {
 
   return c.json({
     item,
+    region,
     meta: getGameMeta().items[item] ?? null,
     variants: [...variants.values()].sort((a, b) => a.level - b.level || a.variant.localeCompare(b.variant)),
-    listings: stmts.openListings.all(item),
-    recentlyClosed: stmts.closedListings.all(item),
+    listings: stmts.openListings.all(item, region),
+    recentlyClosed: stmts.closedListings.all(item, region),
   });
 });

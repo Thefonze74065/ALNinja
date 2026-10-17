@@ -92,6 +92,7 @@ export interface ClosedListing {
 
 export interface ItemDetail {
   item: string;
+  region: string;
   meta: ItemMeta | null;
   variants: Variant[];
   listings: OpenListing[];
@@ -103,6 +104,7 @@ export interface Status {
   lastSuccessfulPoll: { fetched_at: number; merchants: number } | null;
   pollIntervalMinutes: number;
   freshHours: number;
+  regions: string[];
   open_listings: number;
   merchants: number;
   tracking_since: number | null;
@@ -117,6 +119,7 @@ async function get<T>(path: string): Promise<T> {
 export const api = {
   meta: () => get<GameMeta>("/meta"),
   status: () => get<Status>("/status"),
-  overview: () => get<OverviewRow[]>("/overview"),
-  item: (item: string, days: number) => get<ItemDetail>(`/items/${encodeURIComponent(item)}?days=${days}`),
+  overview: (region: string) => get<OverviewRow[]>(`/overview?region=${region}`),
+  item: (item: string, days: number, region: string) =>
+    get<ItemDetail>(`/items/${encodeURIComponent(item)}?days=${days}&region=${region}`),
 };

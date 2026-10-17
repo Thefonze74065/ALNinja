@@ -62,14 +62,14 @@ const stmts = {
     SELECT DISTINCT m.id, m.last_seen FROM merchants m
     JOIN listings l ON l.merchant = m.id AND l.closed_at IS NULL`),
   freshOpen: db.prepare(`
-    SELECT l.merchant, l.side, l.item, l.level, l.variant, l.price, l.quantity
+    SELECT l.merchant, m.server_region AS region, l.side, l.item, l.level, l.variant, l.price, l.quantity
     FROM listings l JOIN merchants m ON m.id = l.merchant
     WHERE l.closed_at IS NULL AND m.last_seen >= ?`),
   clearBucket: db.prepare("DELETE FROM price_history WHERE bucket = ?"),
   insertPrice: db.prepare(`
-    INSERT INTO price_history (item, level, variant, bucket, sell_min, sell_p25, sell_median, buy_max,
+    INSERT INTO price_history (item, region, level, variant, bucket, sell_min, sell_p25, sell_median, buy_max,
       sell_count, buy_count, sell_qty)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   logPoll: db.prepare(`
     INSERT INTO polls (fetched_at, merchants, updated, opened, closed, error) VALUES (?, ?, ?, ?, ?, ?)`),
 };
@@ -114,37 +114,42 @@ function quantile(sorted: number[], q: number): number {
 /**
  * Rebuilds the current hour's price index from listings of recently seen merchants.
  * Each merchant counts once per item variant (its best offer), so one stand filling
- * a dozen slots at a silly price can't drag the quartiles around.
+ * a dozen slots at a silly price can't drag the quartiles around. Every offer feeds both
+ * the 'ALL' index and the index for its merchant's current server region.
  */
 export function recomputePrices(now = Date.now()) {
-  const rows = stmts.freshOpen.all(now - config.freshHours * HOUR) as unknown as (Offer & { merchant: string })[];
-  const groups = new Map<string, { key: Offer; sell: Map<string, number>; buy: Map<string, number>; qty: number }>();
+  const rows = stmts.freshOpen.all(now - config.freshHours * HOUR) as unknown as
+    (Offer & { merchant: string; region: string | null })[];
+  type Group = { key: Offer; region: string; sell: Map<string, number>; buy: Map<string, number>; qty: number };
+  const groups = new Map<string, Group>();
   for (const r of rows) {
-    const k = `${r.item}\u0000${r.level}\u0000${r.variant}`;
-    let g = groups.get(k);
-    if (!g) groups.set(k, (g = { key: r, sell: new Map(), buy: new Map(), qty: 0 }));
-    if (r.side === "sell") {
-      g.sell.set(r.merchant, Math.min(r.price, g.sell.get(r.merchant) ?? Infinity));
-      g.qty += r.quantity;
-    } else {
-      g.buy.set(r.merchant, Math.max(r.price, g.buy.get(r.merchant) ?? 0));
+    for (const region of r.region ? ["ALL", r.region] : ["ALL"]) {
+      const k = `${region}\u0000${r.item}\u0000${r.level}\u0000${r.variant}`;
+      let g = groups.get(k);
+      if (!g) groups.set(k, (g = { key: r, region, sell: new Map(), buy: new Map(), qty: 0 }));
+      if (r.side === "sell") {
+        g.sell.set(r.merchant, Math.min(r.price, g.sell.get(r.merchant) ?? Infinity));
+        g.qty += r.quantity;
+      } else {
+        g.buy.set(r.merchant, Math.max(r.price, g.buy.get(r.merchant) ?? 0));
+      }
     }
   }
 
   const bucket = Math.floor(now / HOUR) * HOUR;
   stmts.clearBucket.run(bucket);
   for (const g of groups.values()) {
-    const { key, qty } = g;
+    const { key, region, qty } = g;
     const sell = [...g.sell.values()].sort((a, b) => a - b);
     const buy = [...g.buy.values()];
-    stmts.insertPrice.run(key.item, key.level, key.variant, bucket,
+    stmts.insertPrice.run(key.item, region, key.level, key.variant, bucket,
       sell.length ? sell[0] : null,
       sell.length ? quantile(sell, 0.25) : null,
       sell.length ? quantile(sell, 0.5) : null,
       buy.length ? Math.max(...buy) : null,
       sell.length, buy.length, qty);
   }
-  return groups.size;
+  return [...groups.values()].filter((g) => g.region === "ALL").length;
 }
 
 function archive(raw: string, at: Date) {

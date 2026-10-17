@@ -19,10 +19,34 @@ function useRoute() {
   return { parts: path.split("/").filter(Boolean), params: new URLSearchParams(query) };
 }
 
+const REGION_KEY = "alninja.region";
+
+/** Selected server region ("ALL", "US", ...), remembered per browser when storage is available. */
+function useRegion() {
+  const [region, setRegion] = useState(() => {
+    try {
+      return localStorage.getItem(REGION_KEY) ?? "ALL";
+    } catch {
+      return "ALL";
+    }
+  });
+  const choose = (r: string) => {
+    setRegion(r);
+    try {
+      localStorage.setItem(REGION_KEY, r);
+    } catch {
+      // Storage unavailable (private mode etc.); the choice just won't persist.
+    }
+  };
+  return [region, choose] as const;
+}
+
 export function App() {
   const { parts, params } = useRoute();
   const [meta, setMeta] = useState<GameMeta | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
+  const [region, setRegion] = useRegion();
+  const regions = ["ALL", ...(status?.regions ?? ["US", "EU", "ASIA"])];
 
   useEffect(() => {
     api.meta().then(setMeta, console.error);
@@ -39,6 +63,13 @@ export function App() {
           <span className="brand-mark">AL</span>Ninja
         </a>
         <span className="tagline">Adventure Land market prices</span>
+        <nav className="tabs region" aria-label="Server region">
+          {regions.map((r) => (
+            <button key={r} type="button" className={r === region ? "active" : ""} onClick={() => setRegion(r)}>
+              {r === "ALL" ? "All regions" : r}
+            </button>
+          ))}
+        </nav>
         <span className="poll-status" title={failing ? `Last poll failed: ${failing}` : undefined}>
           {failing && <span className="dot dot-bad" aria-label="error" />}
           {lastPoll
@@ -50,9 +81,9 @@ export function App() {
       </header>
       <main>
         {parts[0] === "item" && parts[1] ? (
-          <ItemPage item={decodeURIComponent(parts[1])} params={params} meta={meta} />
+          <ItemPage item={decodeURIComponent(parts[1])} params={params} meta={meta} region={region} />
         ) : (
-          <Overview meta={meta} />
+          <Overview meta={meta} region={region} />
         )}
       </main>
       <footer>

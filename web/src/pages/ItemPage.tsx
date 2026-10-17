@@ -15,15 +15,32 @@ const RANGES = [
 
 const count = (v: number | null) => (v == null ? "—" : String(Math.round(v)));
 
-export function ItemPage({ item, params, meta }: { item: string; params: URLSearchParams; meta: GameMeta | null }) {
+export function ItemPage({
+  item,
+  params,
+  meta,
+  region,
+}: {
+  item: string;
+  params: URLSearchParams;
+  meta: GameMeta | null;
+  region: string;
+}) {
   const [days, setDays] = useState(7);
   const [detail, setDetail] = useState<ItemDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let current = true;
     setError(null);
-    api.item(item, days).then(setDetail, (e) => setError(String(e)));
-  }, [item, days]);
+    api.item(item, days, region).then(
+      (d) => current && setDetail(d),
+      (e) => current && setError(String(e)),
+    );
+    return () => {
+      current = false;
+    };
+  }, [item, days, region]);
 
   const m = detail?.meta ?? meta?.items[item] ?? null;
   const leveled = Boolean(m?.upgradeable || m?.compoundable);
@@ -91,13 +108,18 @@ export function ItemPage({ item, params, meta }: { item: string; params: URLSear
             <div className="headline-value">{gold(chart.latest.p25 ?? chart.latest.buy)}</div>
             <div className="muted">
               <Change value={chart.change} /> over {RANGES.find((r) => r.days === days)?.label}
+              {region !== "ALL" && <> · {region}</>}
             </div>
           </div>
         )}
       </div>
 
       {error && <p className="error">Couldn't load item: {error}</p>}
-      {detail && !detail.variants.length && <p className="muted">No price history for this item yet.</p>}
+      {detail && !detail.variants.length && (
+        <p className="muted">
+          No price history for this item{region !== "ALL" ? ` in ${region}` : ""} yet.
+        </p>
+      )}
 
       {detail && detail.variants.length > 0 && selected && chart && (
         <>

@@ -18,7 +18,9 @@ history, so ALNinja keeps its own:
    item × level × variant (variant = `p` title such as `shiny`, or jar `data`). Only merchants seen in
    the last `FRESH_HOURS` count, and each merchant contributes once (their best offer), so a
    single stand can't skew the price. The headline price is the **lower-quartile ask**. Median ask,
-   lowest ask, best bid, seller/buyer counts and total quantity are stored too.
+   lowest ask, best bid, seller/buyer counts and total quantity are stored too. Each index is computed
+   for all regions combined (`ALL`) and separately for each server region (US, EU, ASIA), using the
+   region the merchant is currently on.
 3. **Raw archive**: every raw response is saved gzipped under `data/raw/YYYY-MM-DD/`, so you
    can reprocess history later if the pricing logic changes (~3 MB/day at 10-minute polls).
 
@@ -68,7 +70,9 @@ npm run typecheck
 
 ## API
 
-- `GET /api/overview`: latest price per item/level/variant with a 7-day daily sparkline and change
-- `GET /api/items/:item?days=30`: hourly history per variant, open listings, recently closed listings
+- `GET /api/overview?region=EU`: latest price per item/level/variant with a 7-day daily sparkline and change
+- `GET /api/items/:item?days=30&region=EU`: hourly history per variant, open listings, recently closed listings
 - `GET /api/meta`: item metadata (names, categories, icons)
-- `GET /api/status`: last poll, counts, tracking start
+- `GET /api/status`: last poll, counts, tracking start, known regions
+
+`region` is optional on every endpoint; omitted (or `ALL`) means all regions combined.

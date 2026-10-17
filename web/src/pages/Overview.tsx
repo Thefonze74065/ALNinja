@@ -24,7 +24,7 @@ export function Change({ value }: { value: number | null }) {
   );
 }
 
-export function Overview({ meta }: { meta: GameMeta | null }) {
+export function Overview({ meta, region }: { meta: GameMeta | null; region: string }) {
   const [rows, setRows] = useState<OverviewRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState("All");
@@ -33,8 +33,16 @@ export function Overview({ meta }: { meta: GameMeta | null }) {
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "sellCount", desc: true });
 
   useEffect(() => {
-    api.overview().then(setRows, (e) => setError(String(e)));
-  }, []);
+    let current = true;
+    setError(null);
+    api.overview(region).then(
+      (r) => current && setRows(r),
+      (e) => current && setError(String(e)),
+    );
+    return () => {
+      current = false;
+    };
+  }, [region]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { All: rows?.length ?? 0 };
@@ -128,7 +136,7 @@ export function Overview({ meta }: { meta: GameMeta | null }) {
                         <span>
                           <span className="item-name">{r.name}</span>
                           {label && <span className="badge">{label}</span>}
-                          {r.stale && <span className="badge badge-muted" title="No fresh listings this hour">stale</span>}
+                          {r.stale && <span className="badge badge-muted" title="No fresh listings in the last hour">stale</span>}
                         </span>
                       </a>
                     </td>

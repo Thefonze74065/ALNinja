@@ -99,8 +99,15 @@ main {
 .tagline {
   color: var(--text-muted);
 }
+.tabs.region {
+  margin: 0 0 0 auto;
+  align-self: center;
+}
+.tabs.region button {
+  padding: 3px 10px;
+  font-size: 13px;
+}
 .poll-status {
-  margin-left: auto;
   color: var(--text-muted);
   font-size: 13px;
 }
@@ -365,6 +372,11 @@ th button {
   }
   .tagline {
     display: none;
+  }
+  .tabs.region {
+    order: 3;
+    margin-left: 0;
+    width: 100%;
   }
   .tabs.range {
     margin-left: 0;
