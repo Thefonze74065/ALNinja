@@ -78,6 +78,7 @@ The included compose file sets `user: "568:568"`, TrueNAS SCALE's `apps` user, f
 | `POLL_INTERVAL_MINUTES` | `10` | How often to poll ALData |
 | `FRESH_HOURS` | `48` | Ignore merchants not seen by ALData for longer than this |
 | `ARCHIVE_RAW` | `true` | Keep gzipped raw `/merchants` responses |
+| `REBUILD` | (unset) | Rebuild from the raw archive on startup, once per distinct value |
 | `HOURLY_RETENTION_DAYS` | `90` | Hourly price rows kept in the database (min 8); older ones live in the CSV archive |
 | `RATE_LIMIT_PER_MINUTE` | `120` | Per-IP request budget for `/api` (0 disables) |
 | `TRUST_PROXY` | `false` | Use `X-Forwarded-For` for client IPs (set when behind a reverse proxy/tunnel) |
@@ -90,16 +91,24 @@ When the collector's rules change (how sales are detected, how prices are indexe
 replays every raw snapshot through the current code. Fixing a rule then fixes all history, not just
 future polls. Replaying reproduces live polling exactly; this was checked row by row.
 
-```sh
-docker compose stop alninja
-docker compose run --rm alninja node server/src/rebuild.ts
-docker compose start alninja
+Set `REBUILD` to any value in the compose file and redeploy (works from Dockge, Portainer, TrueNAS
+apps and similar UIs):
+
+```yaml
+    environment:
+      REBUILD: "1"   # change to "2", "3", … to rebuild again later
 ```
+
+On startup the container rebuilds before it begins serving and polling, and records the value in
+`/data/.rebuild-done`, so leaving the variable set doesn't repeat it. Progress shows in the container log.
+Expect a few minutes per month of history. From a shell instead:
+`docker compose stop alninja && docker compose run --rm alninja node server/src/rebuild.ts && docker compose start alninja`.
 
 The rebuild writes a new database and CSV archive beside the live ones, swaps them in only when complete,
 and keeps the previous ones as `*.bak-<timestamp>` for you to delete once satisfied. It refuses to run if
 the server looks like it's still polling, or if the raw archive covers fewer polls than the database
-(e.g. `ARCHIVE_RAW` was off for a while). `--force` overrides both checks.
+(e.g. `ARCHIVE_RAW` was off for a while). `--force` (or `REBUILD_FORCE: "true"`) overrides both checks. If a startup rebuild fails or
+is refused, the reason is logged and the server starts on the existing database.
 
 ## Development
 

@@ -1,57 +1,30 @@
-import { serve } from "@hono/node-server";
-import { serveStatic } from "@hono/node-server/serve-static";
-import { Hono } from "hono";
-import { cors } from "hono/cors";
+// Entry point. Runs a requested rebuild before anything opens the database, then starts the server.
+//
+// REBUILD=<token>: rebuild from the raw archive on startup, once per token. The token of the last
+// successful rebuild is kept in DATA_DIR/.rebuild-done, so leaving the variable set doesn't repeat it;
+// change the value to rebuild again. REBUILD_FORCE=true skips the rebuild's archive-coverage checks.
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
-import { api } from "./api.ts";
-import { maintain } from "./archive.ts";
-import { poll } from "./collector.ts";
-import { config } from "./config.ts";
-import { db } from "./db.ts";
-import { refreshGameData } from "./gamedata.ts";
-import { rateLimit } from "./ratelimit.ts";
-import { v1 } from "./v1.ts";
 
-await refreshGameData();
-
-if (process.argv.includes("--poll-once")) {
-  await poll();
-  process.exit(0);
-}
-
-// Poll on a fixed schedule; setTimeout chaining means a slow poll never overlaps the next.
-async function pollLoop() {
-  await poll();
-  try {
-    maintain();
-  } catch (err) {
-    console.error(`[archive] maintenance failed: ${(err as Error).message}`);
+const token = process.env.REBUILD?.trim();
+if (token) {
+  const dataDir = path.resolve(process.env.DATA_DIR ?? "./data");
+  const marker = path.join(dataDir, ".rebuild-done");
+  const done = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim() : null;
+  if (done === token) {
+    console.log(`[rebuild] REBUILD=${token} already done; change the value to rebuild again`);
+  } else {
+    console.log(`[rebuild] REBUILD=${token} requested; rebuilding before the server starts`);
+    const args = [path.join(import.meta.dirname, "rebuild.ts"), "--startup"];
+    if (process.env.REBUILD_FORCE === "true") args.push("--force");
+    const result = spawnSync(process.execPath, args, { stdio: "inherit" });
+    if (result.status === 0) {
+      fs.writeFileSync(marker, `${token}\n`);
+    } else {
+      console.error("[rebuild] failed or refused (see above); starting with the existing database");
+    }
   }
-  setTimeout(pollLoop, config.pollIntervalMinutes * 60_000);
 }
-pollLoop();
-setInterval(refreshGameData, 24 * 3_600_000);
 
-const app = new Hono();
-// Open to any origin so in-game code (running on adventure.land) and other tools can call it.
-app.use("/api/*", cors({ origin: "*", allowMethods: ["GET"] }), rateLimit);
-app.route("/api/v1", v1);
-app.route("/api", api);
-app.all("/api/*", (c) => c.json({ error: "Not found. See GET /api/v1 for endpoints." }, 404));
-app.get("/healthz", (c) => c.text("ok"));
-app.use("/*", serveStatic({ root: path.relative(process.cwd(), config.webDir) }));
-app.get("*", serveStatic({ path: path.relative(process.cwd(), path.join(config.webDir, "index.html")) }));
-
-const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-  console.log(`[http] ALNinja listening on :${info.port}`);
-});
-
-// As PID 1 in a container Node won't exit on SIGTERM by itself; close SQLite cleanly.
-for (const signal of ["SIGTERM", "SIGINT"] as const) {
-  process.on(signal, () => {
-    console.log(`[shutdown] ${signal}`);
-    server.close();
-    db.close();
-    process.exit(0);
-  });
-}
+await import("./server.ts");

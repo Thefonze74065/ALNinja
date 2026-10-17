@@ -3,7 +3,7 @@
 //
 //   node server/src/rebuild.ts [--force]
 //
-// Stop the server first. The new database and archive are built beside the live ones and swapped in
+// Or set REBUILD=<token> on the container and restart it (see index.ts). Stop the server first. The new database and archive are built beside the live ones and swapped in
 // only when complete; the old ones are kept as *.bak-<timestamp> for you to delete once you're happy.
 import fs from "node:fs";
 import path from "node:path";
@@ -11,6 +11,8 @@ import zlib from "node:zlib";
 import { DatabaseSync } from "node:sqlite";
 
 const force = process.argv.includes("--force");
+// Launched by index.ts while the server is starting, so the server can't be polling.
+const startup = process.argv.includes("--startup");
 const dataDir = path.resolve(process.env.DATA_DIR ?? "./data");
 const rawDir = path.join(dataDir, "raw");
 const liveDb = path.resolve(process.env.DB_PATH ?? path.join(dataDir, "alninja.sqlite"));
@@ -48,7 +50,7 @@ if (fs.existsSync(liveDb)) {
     { n: number; first: number | null; last: number | null };
   live.close();
   const problems: string[] = [];
-  if (polls.last && Date.now() - polls.last < 5 * 60_000) {
+  if (!startup && polls.last && Date.now() - polls.last < 5 * 60_000) {
     problems.push(`the live database was polled ${Math.round((Date.now() - polls.last) / 1000)}s ago: stop the server first`);
   }
   if (snapshots.length < polls.n) {
@@ -60,7 +62,7 @@ if (fs.existsSync(liveDb)) {
   }
   if (problems.length) {
     for (const p of problems) console.error(`[rebuild] ${p}`);
-    if (!force) fail("Refusing to rebuild. Fix the above, or pass --force to rebuild anyway.");
+    if (!force) fail("Refusing to rebuild. Fix the above, or pass --force (REBUILD_FORCE=true) to rebuild anyway.");
     console.warn("[rebuild] --force given, continuing.");
   }
 }
