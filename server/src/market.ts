@@ -352,7 +352,8 @@ export function velocity(item: string, region: string, days: number) {
       const inBand = listings.filter((l) => l.price / l.market > lower && l.price / l.market <= b.max);
       lower = b.max;
       const sold = inBand.filter((l) => l.close_reason === "gone").length;
-      const pulled = inBand.filter((l) => l.closed_at != null && l.close_reason !== "gone").length;
+      // 'pending' listings haven't resolved yet, so they count as still up.
+      const pulled = inBand.filter((l) => l.closed_at != null && !["gone", "pending"].includes(l.close_reason)).length;
       return {
         band: b.label,
         listings: inBand.length,

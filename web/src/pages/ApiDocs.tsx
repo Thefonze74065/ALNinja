@@ -233,7 +233,8 @@ for (const p of prices) console.log(p.item, p.level, p.price, p.soldPerDay);`;
       </div>
       <BulkData />
       <p className="footnote">
-        Sales are estimates: a stack shrinking, or a listing disappearing while the rest of the stand stays up, priced
+        Sales are estimates: a stack shrinking, or a listing disappearing while the rest of the stand stays up (and not
+        put back within 2 hours, so sales are reported with that delay, dated when the listing vanished), priced
         within 3× of market (buy orders: at least ⅓ of market). Items parked at placeholder prices are ignored.
       </p>
     </section>

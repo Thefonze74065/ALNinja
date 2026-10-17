@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 import { config } from "./config.ts";
+import { SALE_CONFIRM_MS } from "./collector.ts";
 import { db, transaction } from "./db.ts";
 
 const HOUR = 3_600_000;
@@ -95,9 +96,10 @@ export function maintain(now = Date.now(), force = false) {
   if (first == null) return { exported: 0, retired: 0 };
 
   let exported = 0;
-  // A day is complete once the poll in the following hour has landed. Export and summary happen
-  // together and are recorded in archived_days, so days with no data (downtime) are done once too.
-  for (let day = Math.floor(first / DAY) * DAY; day + DAY + HOUR <= now; day += DAY) {
+  // A day is complete once its last sales are confirmed (SALE_CONFIRM_MS) and the next poll has landed.
+  // Export and summary happen together and are recorded in archived_days, so days with no data
+  // (downtime) are done once too.
+  for (let day = Math.floor(first / DAY) * DAY; day + DAY + SALE_CONFIRM_MS + HOUR <= now; day += DAY) {
     if (!force && stmts.archived.get(day)) continue;
     transaction(() => stmts.rollup.run(day, day + DAY));
     exportDay(day);

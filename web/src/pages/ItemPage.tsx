@@ -361,7 +361,8 @@ export function ItemPage({
         <div className="panel">
           <h2>Recent sales</h2>
           <p className="muted small">
-            Estimated: stock that left a stand priced near the market. Quantity drops count as partial sales.
+            Estimated: stock that left a stand priced near the market and wasn't put back within 2 hours (so the
+            latest sales appear with that delay). Quantity drops count as partial sales.
           </p>
           {sales.length === 0 ? (
             <p className="muted">No sales seen in the last {rangeLabel}.</p>

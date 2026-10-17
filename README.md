@@ -24,7 +24,10 @@ history, so ALNinja keeps its own:
 3. **Sales (estimated)**: a listing's quantity dropping, or a listing disappearing while the rest of
    the stand stays up, is recorded in `sales`. To filter out items merely stored on a stand, only offers
    priced near the market count: sells at most 3× the market price, buy orders at least ⅓ of it, and nothing at
-   placeholder prices (10b+). A stand emptying all at once is `withdrawn`, not a sell-out. Sales feed
+   placeholder prices (10b+). A stand emptying all at once is `withdrawn`, not a sell-out. A vanished
+   listing only counts once it has stayed gone for 2 hours: merchants often take stock down and put it
+   back (restocking, repricing), and if the same goods return it was a withdrawal or reprice (a smaller
+   returning stack counts the difference as sold). Sales are dated when the listing vanished. Sales feed
    sold-per-day figures, the most-traded list, and each item's time-to-sell by price band.
 4. **Deals**: buyable listings worth more elsewhere. **npc**: an NPC pays more than the asking price
    (NPC value is a port of the game's own `calculate_item_value`, including upgrade/compound levels,

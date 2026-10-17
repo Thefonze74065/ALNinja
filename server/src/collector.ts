@@ -25,6 +25,18 @@ interface OpenListing extends Offer {
   first_seen: number;
 }
 
+interface PendingListing extends OpenListing {
+  closed_at: number;
+  server_region: string | null;
+}
+
+/**
+ * How long a vanished listing waits before counting as sold. Merchants take stock down and put it back
+ * (restocking, repricing) across separate updates; if the same goods return within this window it was
+ * a withdrawal or reprice, not a sale.
+ */
+export const SALE_CONFIRM_MS = 2 * HOUR;
+
 export type Stats = { updated: number; opened: number; closed: number; sales: number };
 
 /** Turns a raw merchant slot into a priced offer, or null if it shouldn't count toward prices. */
@@ -63,6 +75,13 @@ const stmts = {
   marketPrice: db.prepare(`
     SELECT sell_p25 FROM price_history WHERE item = ? AND region = 'ALL' AND level = ? AND variant = ?
     ORDER BY bucket DESC LIMIT 1`),
+  pendingFor: db.prepare(`
+    SELECT id, slot, side, item, level, variant, price, quantity, flags, first_seen, closed_at, server_region
+    FROM listings WHERE merchant = ? AND close_reason = 'pending' AND closed_at >= ? ORDER BY closed_at DESC`),
+  duePending: db.prepare(`
+    SELECT id, merchant, slot, side, item, level, variant, price, quantity, flags, first_seen, closed_at, server_region
+    FROM listings WHERE close_reason = 'pending' AND closed_at < ? ORDER BY closed_at, id`),
+  setReason: db.prepare("UPDATE listings SET close_reason = ? WHERE id = ?"),
   insertSale: db.prepare(`
     INSERT INTO sales (listing_id, merchant, side, item, level, variant, region, price, quantity, listed_at, at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
@@ -116,9 +135,9 @@ function syncMerchant(m: Merchant, stats: Stats) {
     .filter((o): o is Offer => o !== null);
   const open = stmts.openListings.all(m.id) as unknown as OpenListing[];
 
-  const sale = (l: OpenListing, quantity: number) => {
+  const sale = (l: OpenListing, quantity: number, at = seen) => {
     stmts.insertSale.run(l.id, m.id, l.side, l.item, l.level, l.variant, m.serverRegion, l.price, quantity,
-      l.first_seen, seen);
+      l.first_seen, at);
     stats.sales++;
   };
   const unmatched = new Set(current);
@@ -150,22 +169,31 @@ function syncMerchant(m: Merchant, stats: Stats) {
   const standClosed = current.length === 0 && gone.length >= 3;
   // New offers that already account for a vanished listing; each can explain only one.
   const relistings = new Set<Offer>();
+  const relisting = (l: Offer) => current.find((o) => unmatched.has(o) && !relistings.has(o) && sameGoods(o, l));
+  /** The same goods came back (`o`): a reprice, or a withdrawal if at the same price. A smaller stack sold the difference. */
+  const resolveRelisted = (l: OpenListing, o: Offer, at: number) => {
+    relistings.add(o);
+    if (o.quantity < l.quantity && plausibleTrade(l)) sale(l, l.quantity - o.quantity, at);
+    return o.price === l.price ? "withdrawn" : "repriced";
+  };
+
   for (const l of gone) {
-    // The same goods listed anew at a different price, in any slot, in this same update: a reprice.
-    // If the new stack is smaller, the difference sold first.
-    const relisted = standClosed
-      ? undefined
-      : current.find((o) => unmatched.has(o) && !relistings.has(o) && sameGoods(o, l));
     let reason: string;
     if (standClosed) reason = "withdrawn";
-    else if (relisted) {
-      relistings.add(relisted);
-      reason = "repriced";
-      if (relisted.quantity < l.quantity && plausibleTrade(l)) sale(l, l.quantity - relisted.quantity);
-    } else reason = plausibleTrade(l) ? "gone" : "withdrawn";
+    else {
+      const o = relisting(l);
+      if (o) reason = resolveRelisted(l, o, seen);
+      // Not back yet: wait SALE_CONFIRM_MS before calling it a sale (see confirmPendingSales).
+      else reason = plausibleTrade(l) ? "pending" : "withdrawn";
+    }
     stmts.close.run(seen, reason, l.id);
-    if (reason === "gone") sale(l, l.quantity);
     stats.closed++;
+  }
+
+  // Goods that vanished in an earlier update and are back now were taken down, not sold.
+  for (const p of stmts.pendingFor.all(m.id, seen - SALE_CONFIRM_MS) as unknown as PendingListing[]) {
+    const o = relisting(p);
+    if (o) stmts.setReason.run(resolveRelisted(p, o, p.closed_at), p.id);
   }
   for (const o of unmatched) {
     stmts.insert.run(m.id, o.slot, o.side, o.item, o.level, o.variant, o.flags, o.price, o.quantity, o.quantity,
@@ -226,6 +254,16 @@ function archive(raw: string, at: Date) {
   fs.writeFileSync(path.join(dir, `${iso.slice(11, 19).replaceAll(":", "-")}.json.gz`), zlib.gzipSync(raw));
 }
 
+/** Vanished listings that weren't put back within SALE_CONFIRM_MS are sales, dated when they vanished. */
+function confirmPendingSales(at: number, stats: Stats) {
+  for (const l of stmts.duePending.all(at - SALE_CONFIRM_MS) as unknown as (PendingListing & { merchant: string })[]) {
+    stmts.setReason.run("gone", l.id);
+    stmts.insertSale.run(l.id, l.merchant, l.side, l.item, l.level, l.variant, l.server_region, l.price, l.quantity,
+      l.first_seen, l.closed_at);
+    stats.sales++;
+  }
+}
+
 /**
  * Applies one /merchants snapshot taken at `at` (ms). Deterministic given the database state and the
  * snapshot, so replaying the raw archive in order reproduces what live polling recorded.
@@ -245,6 +283,7 @@ export function ingest(merchants: Merchant[], at: number): Stats & { priced: num
       }
     }
 
+    confirmPendingSales(at, stats);
     const priced = recomputePrices(at);
     stmts.logPoll.run(at, merchants.length, stats.updated, stats.opened, stats.closed, null);
     return { ...stats, priced };

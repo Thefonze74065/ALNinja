@@ -49,17 +49,54 @@ describe("listing lifecycle", () => {
     assert.equal(listingsOf("Partial")[0].quantity, 7);
   });
 
-  test("a listing vanishing while the stand stays up is a sale", () => {
+  test("a listing vanishing while the stand stays up is a sale once it stays gone", () => {
     const a = { name: "t_sold", price: 1000 };
     const b = { name: "t_other", price: 5 };
     ingest([merchant("Sold", T0, { trade1: a, trade2: b })], T0);
     ingest([merchant("Sold", T0 + 2 * HOUR, { trade2: b })], T0 + 2 * HOUR);
+    const pending = listingsOf("Sold").find((l) => l.item === "t_sold");
+    assert.equal(pending.close_reason, "pending");
+    assert.equal(salesOf("Sold").length, 0, "not a sale until the confirmation window passes");
+
+    ingest([merchant("Sold", T0 + 5 * HOUR, { trade2: b })], T0 + 5 * HOUR);
     const sold = listingsOf("Sold").find((l) => l.item === "t_sold");
     assert.equal(sold.close_reason, "gone");
     assert.equal(sold.closed_at, T0 + 2 * HOUR);
     const [sale] = salesOf("Sold");
     assert.equal(sale.item, "t_sold");
+    assert.equal(sale.at, T0 + 2 * HOUR, "dated when it vanished");
     assert.equal(sale.at - sale.listed_at, 2 * HOUR);
+  });
+
+  test("stock taken down and put back in a later update is not a sale (Velmoran restock case)", () => {
+    const keep = { trade1: { name: "t_keep7", price: 1 } };
+    ingest([merchant("Restock", T0, {
+      ...keep,
+      trade12: { name: "t_spore", price: 143, q: 9999 },
+      trade13: { name: "t_shell", price: 959, q: 6263 },
+    })], T0);
+    ingest([merchant("Restock", T0 + HOUR, keep)], T0 + HOUR);
+    ingest([merchant("Restock", T0 + HOUR + 30 * 60_000, {
+      ...keep,
+      trade9: { name: "t_spore", price: 168, q: 9999 },
+      trade10: { name: "t_shell", price: 959, q: 6383 },
+    })], T0 + HOUR + 30 * 60_000);
+    ingest([merchant("Restock", T0 + 6 * HOUR, {
+      ...keep,
+      trade9: { name: "t_spore", price: 168, q: 9999 },
+      trade10: { name: "t_shell", price: 959, q: 6383 },
+    })], T0 + 6 * HOUR);
+    const old = listingsOf("Restock").filter((l) => l.closed_at != null);
+    assert.deepEqual(old.map((l) => [l.item, l.close_reason]), [["t_spore", "repriced"], ["t_shell", "withdrawn"]]);
+    assert.equal(salesOf("Restock").length, 0);
+  });
+
+  test("a smaller stack put back later counts the difference as sold, when it vanished", () => {
+    const keep = { trade1: { name: "t_keep8", price: 1 } };
+    ingest([merchant("Partial2", T0, { ...keep, trade2: { name: "t_part2", price: 50, q: 10 } })], T0);
+    ingest([merchant("Partial2", T0 + HOUR, keep)], T0 + HOUR);
+    ingest([merchant("Partial2", T0 + 2 * HOUR, { ...keep, trade3: { name: "t_part2", price: 50, q: 6 } })], T0 + 2 * HOUR);
+    assert.deepEqual(salesOf("Partial2").map((s) => [s.quantity, s.at]), [[4, T0 + HOUR]]);
   });
 
   test("a price change in the same slot is a reprice, not a sale", () => {
@@ -92,7 +129,8 @@ describe("listing lifecycle", () => {
     ingest([merchant("Two", T0, { ...keep, trade2: { name: "t_two", price: 100 }, trade3: { name: "t_two", price: 110 } })], T0);
     ingest([merchant("Two", T0 + HOUR, { ...keep, trade4: { name: "t_two", price: 120 } })], T0 + HOUR);
     const closed = listingsOf("Two").filter((l) => l.item === "t_two" && l.closed_at != null);
-    assert.deepEqual(closed.map((l) => l.close_reason).sort(), ["gone", "repriced"]);
+    assert.deepEqual(closed.map((l) => l.close_reason).sort(), ["pending", "repriced"]);
+    ingest([merchant("Two", T0 + 4 * HOUR, { ...keep, trade4: { name: "t_two", price: 120 } })], T0 + 4 * HOUR);
     assert.equal(salesOf("Two").length, 1);
   });
 

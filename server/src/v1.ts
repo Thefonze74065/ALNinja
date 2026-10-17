@@ -28,7 +28,8 @@ v1.get("/", (c) =>
     notes: [
       "Prices are in gold per unit. Times are Unix epoch milliseconds.",
       "region is ALL (default), US, EU or ASIA on every endpoint.",
-      "Sales are estimated from merchant stands: a quantity drop or a listing disappearing while the stand stays up.",
+      "Sales are estimated from merchant stands: a quantity drop, or a listing disappearing while the stand stays up " +
+        "and not put back within 2 hours. They're reported after that delay, dated when the listing vanished.",
     ],
     endpoints: {
       "GET /api/v1/prices": "Current price of every item. ?region= &items=a,b &min_sellers=",
