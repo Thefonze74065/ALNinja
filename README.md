@@ -27,9 +27,17 @@ refreshed daily and cached in `data/gamedata.json`.
 
 ## Running on Docker
 
+GitHub Actions builds the image on every push to `main` and publishes it as
+`ghcr.io/thefonze74065/alninja:latest` (plus `sha-<commit>` tags, and version tags for `v*` git tags).
+`docker-compose.yml` pulls that image:
+
 ```sh
-docker compose up -d --build
+docker compose pull && docker compose up -d
 ```
+
+The repo is private, so its package is too. Either make the package public (GitHub → Packages →
+alninja → Package settings → Change visibility), or log the host in once with a classic personal
+access token that has `read:packages`: `docker login ghcr.io -u Thefonze74065`.
 
 Then open `http://<host>:8080`. Everything lives in the `/data` volume (SQLite database, game-data
 cache, raw archive). In `docker-compose.yml`, point it at a dataset, e.g.

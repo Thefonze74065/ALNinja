@@ -1,7 +1,9 @@
 services:
   alninja:
-    build: .
-    image: alninja:latest
+    # Built and published by .github/workflows/docker.yml on every push to main.
+    # To build locally instead, replace `image:` with `build: .`
+    image: ghcr.io/thefonze74065/alninja:latest
+    pull_policy: always
     container_name: alninja
     restart: unless-stopped
     ports:
