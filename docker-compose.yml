@@ -27,6 +27,8 @@ services:
       # TRUST_PROXY: cloudflare
       # Set (or change) to replay the raw archive into a fresh database on the next start; see README.
       # REBUILD: "1"
+      # Set (or change) to DELETE all collected history on the next start and begin fresh.
+      # RESET_DATA: "1"
     volumes:
       # On TrueNAS, point this at a dataset, e.g. /mnt/tank/apps/alninja:/data
       # That dataset must be writable by the `user:` above.

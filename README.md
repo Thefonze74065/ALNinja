@@ -84,6 +84,7 @@ The included compose file sets `user: "568:568"`, TrueNAS SCALE's `apps` user, f
 | `FRESH_HOURS` | `48` | Ignore merchants not seen by ALData for longer than this |
 | `ARCHIVE_RAW` | `true` | Keep gzipped raw `/merchants` responses |
 | `REBUILD` | (unset) | Rebuild from the raw archive on startup, once per distinct value |
+| `RESET_DATA` | (unset) | **Deletes all collected history** (database, CSV archive, raw snapshots, backups) on startup and starts fresh, once per distinct value |
 | `HOURLY_RETENTION_DAYS` | `90` | Hourly price rows kept in the database (min 8); older ones live in the CSV archive |
 | `RATE_LIMIT_PER_MINUTE` | `120` | Per-IP request budget for `/api` (0 disables) |
 | `TRUST_PROXY` | `false` | How to find the client IP for rate limiting: `cloudflare` (behind Cloudflare or a Cloudflare Tunnel: uses `CF-Connecting-IP`), `true` (other reverse proxies: the last `X-Forwarded-For` entry), `false` (exposed directly). Behind a proxy, leaving it `false` makes every visitor share one limit |
