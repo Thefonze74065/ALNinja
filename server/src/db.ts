@@ -3,6 +3,14 @@ import { DatabaseSync } from "node:sqlite";
 import { config } from "./config.ts";
 
 fs.mkdirSync(config.dataDir, { recursive: true });
+try {
+  fs.accessSync(config.dataDir, fs.constants.W_OK);
+} catch {
+  throw new Error(
+    `Data directory ${config.dataDir} is not writable by uid ${process.getuid?.()} (gid ${process.getgid?.()}). ` +
+      `Grant that user write access, or run the container as a user that has it (docker-compose \`user:\`).`,
+  );
+}
 
 export const db = new DatabaseSync(config.dbPath);
 

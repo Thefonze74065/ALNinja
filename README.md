@@ -41,7 +41,8 @@ access token that has `read:packages`: `docker login ghcr.io -u Thefonze74065`.
 
 Then open `http://<host>:8080`. Everything lives in the `/data` volume (SQLite database, game-data
 cache, raw archive). In `docker-compose.yml`, point it at a dataset, e.g.
-`/mnt/tank/apps/alninja:/data`. The container runs as uid 1000, so that dataset must be writable by it.
+`/mnt/tank/apps/alninja:/data`. The compose file runs the container as `568:568` (TrueNAS's `apps` user), so that dataset must be
+writable by it; change `user:` if the dataset belongs to someone else. Without `user:` the image runs as 1000:1000.
 
 | Variable | Default | |
 |---|---|---|

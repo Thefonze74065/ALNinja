@@ -5,6 +5,9 @@ services:
     image: ghcr.io/thefonze74065/alninja:latest
     pull_policy: always
     container_name: alninja
+    # Run as the user that owns the data directory. 568:568 is TrueNAS's built-in `apps` user;
+    # remove this line to use the image default (1000:1000).
+    user: "568:568"
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -14,5 +17,5 @@ services:
       ARCHIVE_RAW: "true"
     volumes:
       # On TrueNAS, point this at a dataset, e.g. /mnt/tank/apps/alninja:/data
-      # The container runs as uid 1000 (node), so that dataset must be writable by it.
+      # That dataset must be writable by the `user:` above.
       - ./data:/data
