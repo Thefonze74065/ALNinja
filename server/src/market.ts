@@ -50,6 +50,9 @@ const stmts = {
   history: db.prepare("SELECT * FROM price_history WHERE region = ? AND bucket >= ? ORDER BY bucket"),
   itemHistory: db.prepare(
     "SELECT * FROM price_history WHERE item = ? AND region = ? AND bucket >= ? ORDER BY bucket"),
+  firstHourly: db.prepare("SELECT MIN(bucket) AS t FROM price_history"),
+  itemDaily: db.prepare(
+    "SELECT * FROM price_daily WHERE item = ? AND region = ? AND day >= ? AND day < ? ORDER BY day"),
   salesByKey: db.prepare(`
     SELECT item, level, variant, side, SUM(quantity) AS units FROM sales
     WHERE at >= ?1 AND (?2 = 'ALL' OR region = ?2)
@@ -196,15 +199,35 @@ export function movers(region: string, window: "24h" | "7d", minSellers: number,
   };
 }
 
+/**
+ * Price history per level/variant: hourly points where the database still has them, preceded by daily
+ * closes (from price_daily) for older parts of the range. `hourlyFrom` marks where hourly data starts.
+ */
 export function history(item: string, region: string, days: number) {
-  const rows = stmts.itemHistory.all(item, region, Date.now() - days * DAY) as unknown as PriceRow[];
-  const variants = new Map<string, { level: number; variant: string; npcValue: number; points: unknown[] }>();
-  for (const r of rows) {
-    const k = `${r.level}\u0000${r.variant}`;
+  const since = Date.now() - days * DAY;
+  const firstHourly = (stmts.firstHourly.get() as { t: number | null }).t;
+  const hourlyFrom = firstHourly == null ? Date.now() : Math.floor(firstHourly / DAY) * DAY;
+
+  type Out = { level: number; variant: string; npcValue: number; hourlyFrom: number; points: unknown[] };
+  const variants = new Map<string, Out>();
+  const get = (level: number, variant: string) => {
+    const k = `${level}\u0000${variant}`;
     if (!variants.has(k)) {
-      variants.set(k, { level: r.level, variant: r.variant, npcValue: npcSellValue(item, r.level), points: [] });
+      variants.set(k, { level, variant, npcValue: npcSellValue(item, level), hourlyFrom, points: [] });
     }
-    variants.get(k)!.points.push({
+    return variants.get(k)!;
+  };
+
+  if (since < hourlyFrom) {
+    for (const d of stmts.itemDaily.all(item, region, since, hourlyFrom) as any[]) {
+      get(d.level, d.variant).points.push({
+        t: d.day, price: d.close ?? d.best_bid, lowest: d.lowest, median: d.median, bestBid: d.best_bid,
+        sellers: Math.round(d.sellers), buyers: Math.round(d.buyers), quantity: Math.round(d.quantity),
+      });
+    }
+  }
+  for (const r of stmts.itemHistory.all(item, region, since) as unknown as PriceRow[]) {
+    get(r.level, r.variant).points.push({
       t: r.bucket, price: r.sell_p25 ?? r.buy_max, lowest: r.sell_min, median: r.sell_median,
       bestBid: r.buy_max, sellers: r.sell_count, buyers: r.buy_count, quantity: r.sell_qty,
     });

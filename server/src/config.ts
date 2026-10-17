@@ -15,6 +15,7 @@ export const config = {
   dataDir,
   dbPath: path.resolve(process.env.DB_PATH ?? path.join(dataDir, "alninja.sqlite")),
   rawDir: path.join(dataDir, "raw"),
+  archiveDir: path.join(dataDir, "archive"),
   webDir: path.resolve(process.env.WEB_DIR ?? "./web/dist"),
   aldataUrl: (process.env.ALDATA_URL ?? "https://aldata.earthiverse.ca").replace(/\/$/, ""),
   gameDataUrl: process.env.GAME_DATA_URL ?? "https://adventure.land/data.js",
@@ -23,6 +24,9 @@ export const config = {
   freshHours: num("FRESH_HOURS", 48),
   // Keep a gzipped copy of every raw /merchants response so history can be reprocessed later.
   archiveRaw: (process.env.ARCHIVE_RAW ?? "true") !== "false",
+  // Hourly price rows older than this move to the daily table (after being exported to the archive).
+  // The 7-day figures need at least 8 days of hourly data.
+  hourlyRetentionDays: Math.max(8, num("HOURLY_RETENTION_DAYS", 90)),
   // Per-IP request budget for /api; 0 disables limiting.
   rateLimitPerMinute: num("RATE_LIMIT_PER_MINUTE", 120),
   // Behind a reverse proxy / tunnel, take the client IP from X-Forwarded-For.

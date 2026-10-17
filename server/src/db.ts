@@ -106,6 +106,33 @@ if (migrating) {
   console.log("[db] migrated price_history to per-region schema");
 }
 
+// Daily summaries of price_history: long-range charts read these once hourly rows are retired.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS price_daily (
+    item     TEXT NOT NULL,
+    region   TEXT NOT NULL,
+    level    INTEGER NOT NULL,
+    variant  TEXT NOT NULL,
+    day      INTEGER NOT NULL, -- start of UTC day, ms
+    close    INTEGER,          -- last hourly lower-quartile ask of the day
+    low      INTEGER,          -- min hourly lower-quartile ask
+    high     INTEGER,          -- max hourly lower-quartile ask
+    median   INTEGER,          -- last hourly median ask
+    lowest   INTEGER,          -- cheapest ask seen
+    best_bid INTEGER,          -- highest bid seen
+    sellers  REAL NOT NULL,    -- averages over the day's hourly rows
+    buyers   REAL NOT NULL,
+    quantity REAL NOT NULL,
+    hours    INTEGER NOT NULL, -- hourly rows summarized
+    PRIMARY KEY (item, region, level, variant, day)
+  );
+  -- Completed UTC days whose hourly prices and sales were written to the CSV archive.
+  CREATE TABLE IF NOT EXISTS archived_days (
+    day         INTEGER PRIMARY KEY,
+    exported_at INTEGER NOT NULL
+  );
+`);
+
 // v0.3 listings had no flags column.
 if (!(db.prepare("PRAGMA table_info(listings)").all() as { name: string }[]).some((c) => c.name === "flags")) {
   db.exec("ALTER TABLE listings ADD COLUMN flags TEXT NOT NULL DEFAULT ''");

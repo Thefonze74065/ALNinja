@@ -196,6 +196,12 @@ export function ItemPage({
           <div className="panel">
             <h2>Price</h2>
             <TimeChart times={chart.times} series={chart.price} format={gold} />
+            {chart.times.length > 0 && chart.times[0] < selected.hourlyFrom && (
+              <p className="muted small">
+                Daily closes before {new Date(selected.hourlyFrom).toLocaleDateString()}, hourly after. Full hourly
+                history is in the <a href="#/api">data archive</a>.
+              </p>
+            )}
           </div>
           {trades && (
             <div className="panel">

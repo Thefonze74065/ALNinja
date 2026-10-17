@@ -7,6 +7,7 @@ import type { Merchant, MerchantSlot } from "../src/aldata.ts";
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "alninja-test-"));
 process.env.ARCHIVE_RAW = "false";
 process.env.FRESH_HOURS = "48";
+process.env.HOURLY_RETENTION_DAYS = "8";
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
@@ -17,6 +18,7 @@ export const app = {
   db: await import("../src/db.ts"),
   collector: await import("../src/collector.ts"),
   market: await import("../src/market.ts"),
+  archive: await import("../src/archive.ts"),
 };
 export const { db } = app.db;
 

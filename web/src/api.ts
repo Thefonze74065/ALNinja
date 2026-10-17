@@ -61,6 +61,8 @@ export interface Variant {
   level: number;
   variant: string;
   npcValue: number;
+  /** Points before this time are daily closes; after it, hourly. */
+  hourlyFrom: number;
   points: HistoryPoint[];
 }
 

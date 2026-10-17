@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import path from "node:path";
 import { api } from "./api.ts";
+import { maintain } from "./archive.ts";
 import { poll } from "./collector.ts";
 import { config } from "./config.ts";
 import { db } from "./db.ts";
@@ -21,6 +22,11 @@ if (process.argv.includes("--poll-once")) {
 // Poll on a fixed schedule; setTimeout chaining means a slow poll never overlaps the next.
 async function pollLoop() {
   await poll();
+  try {
+    maintain();
+  } catch (err) {
+    console.error(`[archive] maintenance failed: ${(err as Error).message}`);
+  }
   setTimeout(pollLoop, config.pollIntervalMinutes * 60_000);
 }
 pollLoop();

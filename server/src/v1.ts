@@ -1,5 +1,8 @@
 // Public, versioned API for bots and other tools. Keep these shapes stable; add fields, don't rename.
+import fs from "node:fs";
 import { Hono } from "hono";
+import { archiveFile, listArchive } from "./archive.ts";
+import { config } from "./config.ts";
 import { dealOptions, deals, HOUR, history, lastPoll, movers, openListings, recentSales, regionParam, snapshot, type MarketRow } from "./market.ts";
 
 const clamp = (raw: string | undefined, fallback: number, min: number, max: number) => {
@@ -34,6 +37,7 @@ v1.get("/", (c) =>
       "GET /api/v1/listings/:item": "Open merchant listings with location. ?region= &side=sell|buy",
       "GET /api/v1/sales": "Recent estimated sales. ?region= &item= &hours=24 (max 720) &limit=500 (max 2000)",
       "GET /api/v1/movers": "Biggest price changes and most traded. ?region= &window=24h|7d &min_sellers=3 &limit=20",
+      "GET /api/v1/archive": "Daily CSV files of every hourly price row and every sale, for bulk analysis",
       "GET /api/v1/deals":
         "Listings worth buying now. ?region= &kind=npc,underpriced,flip &min_discount=0.2 &min_sellers=3 &min_profit=1 &sort=profit|discount &limit=100 (max 500)",
     },
@@ -108,6 +112,25 @@ v1.get("/deals", (c) => {
   const region = regionParam(c.req.query("region"));
   const opts = dealOptions((name) => c.req.query(name));
   return c.json({ region, updated: lastPoll().at, ...opts, deals: deals(region, opts) });
+});
+
+v1.get("/archive", (c) =>
+  c.json({
+    description:
+      "One gzipped CSV per UTC day. prices: every hourly price row (all items, levels, variants and regions). " +
+      "sales: every estimated sale. Files are permanent; the live database keeps hourly rows for hourlyRetentionDays.",
+    hourlyRetentionDays: config.hourlyRetentionDays,
+    files: listArchive(),
+  }),
+);
+
+v1.get("/archive/:kind/:file", (c) => {
+  const file = archiveFile(c.req.param("kind"), c.req.param("file"));
+  if (!file) return c.json({ error: "No such archive file. See GET /api/v1/archive." }, 404);
+  return c.body(fs.readFileSync(file), 200, {
+    "content-type": "application/gzip",
+    "content-disposition": `attachment; filename="alninja-${c.req.param("kind")}-${c.req.param("file")}"`,
+  });
 });
 
 v1.notFound((c) => c.json({ error: "Not found. See GET /api/v1 for endpoints." }, 404));
