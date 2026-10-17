@@ -184,12 +184,20 @@ function syncMerchant(m: Merchant, stats: Stats) {
     return o.price === l.price ? "withdrawn" : "repriced";
   };
 
+  // The same item newly listed at a higher level: the vanished lower-level copies were consumed by
+  // upgrading or compounding (failed attempts destroy items too), not sold. One upgraded item can
+  // account for several vanished bases, so these new offers aren't claimed.
+  const upgraded = (l: Offer) =>
+    l.side === "sell" &&
+    current.some((o) => unmatched.has(o) && o.side === "sell" && o.item === l.item && o.variant === l.variant && o.level > l.level);
+
   for (const l of gone) {
     let reason: string;
     if (standClosed) reason = "withdrawn";
     else {
       const o = relisting(l);
       if (o) reason = resolveRelisted(l, o, seen);
+      else if (upgraded(l)) reason = "upgraded";
       // Not back yet: wait SALE_CONFIRM_MS before calling it a sale (see confirmPendingSales).
       else reason = plausibleTrade(l, seen) ? "pending" : "withdrawn";
     }
@@ -197,10 +205,11 @@ function syncMerchant(m: Merchant, stats: Stats) {
     stats.closed++;
   }
 
-  // Goods that vanished in an earlier update and are back now were taken down, not sold.
+  // Goods that vanished in an earlier update and are back now (or back upgraded) weren't sold.
   for (const p of stmts.pendingFor.all(m.id, seen - SALE_CONFIRM_MS) as unknown as PendingListing[]) {
     const o = relisting(p);
     if (o) stmts.setReason.run(resolveRelisted(p, o, p.closed_at), p.id);
+    else if (upgraded(p)) stmts.setReason.run("upgraded", p.id);
   }
   for (const o of unmatched) {
     stmts.insert.run(m.id, o.slot, o.side, o.item, o.level, o.variant, o.flags, o.price, o.quantity, o.quantity,

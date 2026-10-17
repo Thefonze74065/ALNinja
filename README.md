@@ -27,7 +27,9 @@ history, so ALNinja keeps its own:
    placeholder prices (10b+). A stand emptying all at once is `withdrawn`, not a sell-out. A vanished
    listing only counts once it has stayed gone for 2 hours: merchants often take stock down and put it
    back (restocking, repricing), and if the same goods return it was a withdrawal or reprice (a smaller
-   returning stack counts the difference as sold). Sales are dated when the listing vanished. Sales feed
+   returning stack counts the difference as sold). Lower-level copies that vanish as the same item appears
+   at a higher level were consumed upgrading or compounding (`upgraded`), not sold. Sales are dated
+   when the listing vanished. Sales feed
    sold-per-day figures, the most-traded list, and each item's time-to-sell by price band.
 4. **Deals**: buyable listings worth more elsewhere. **npc**: an NPC pays more than the asking price
    (NPC value is a port of the game's own `calculate_item_value`, including upgrade/compound levels,

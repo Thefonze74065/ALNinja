@@ -91,6 +91,35 @@ describe("listing lifecycle", () => {
     assert.equal(salesOf("Restock").length, 0);
   });
 
+  test("bases that vanish as a higher-level copy appears were upgraded, not sold (Zintaro xarmor case)", () => {
+    const keep = { trade9: { name: "t_keep9", price: 1 } };
+    ingest([merchant("Upg", T0, { ...keep, trade1: { name: "t_armor", level: 0, price: 50e6 }, trade2: { name: "t_armor", level: 0, price: 50e6 } })], T0);
+    ingest([merchant("Upg", T0 + HOUR, { ...keep, trade3: { name: "t_armor", level: 5, price: 300e6 } })], T0 + HOUR);
+    ingest([merchant("Upg", T0 + 5 * HOUR, { ...keep, trade3: { name: "t_armor", level: 5, price: 300e6 } })], T0 + 5 * HOUR);
+    const bases = listingsOf("Upg").filter((l) => l.item === "t_armor" && l.level === 0);
+    assert.deepEqual(bases.map((l) => l.close_reason), ["upgraded", "upgraded"]);
+    assert.equal(salesOf("Upg").length, 0);
+  });
+
+  test("an upgraded copy listed in a later update still resolves pending bases", () => {
+    const keep = { trade9: { name: "t_keep10", price: 1 } };
+    ingest([merchant("Upg2", T0, { ...keep, trade1: { name: "t_ring", level: 2, price: 1000 } })], T0);
+    ingest([merchant("Upg2", T0 + HOUR, keep)], T0 + HOUR);
+    ingest([merchant("Upg2", T0 + 2 * HOUR, { ...keep, trade4: { name: "t_ring", level: 3, price: 5000 } })], T0 + 2 * HOUR);
+    ingest([merchant("Upg2", T0 + 6 * HOUR, { ...keep, trade4: { name: "t_ring", level: 3, price: 5000 } })], T0 + 6 * HOUR);
+    assert.equal(listingsOf("Upg2").find((l) => l.item === "t_ring" && l.level === 2).close_reason, "upgraded");
+    assert.equal(salesOf("Upg2").length, 0);
+  });
+
+  test("a higher-level copy that was already on the stand doesn't explain a vanished base", () => {
+    const keep = { trade9: { name: "t_keep11", price: 1 }, trade5: { name: "t_bow2", level: 5, price: 9e6 } };
+    ingest([merchant("Upg3", T0, { ...keep, trade1: { name: "t_bow2", level: 0, price: 1e5 } })], T0);
+    ingest([merchant("Upg3", T0 + HOUR, keep)], T0 + HOUR);
+    ingest([merchant("Upg3", T0 + 5 * HOUR, keep)], T0 + 5 * HOUR);
+    assert.equal(listingsOf("Upg3").find((l) => l.item === "t_bow2" && l.level === 0).close_reason, "gone");
+    assert.equal(salesOf("Upg3").length, 1);
+  });
+
   test("a smaller stack put back later counts the difference as sold, when it vanished", () => {
     const keep = { trade1: { name: "t_keep8", price: 1 } };
     ingest([merchant("Partial2", T0, { ...keep, trade2: { name: "t_part2", price: 50, q: 10 } })], T0);

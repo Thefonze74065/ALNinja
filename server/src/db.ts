@@ -67,7 +67,8 @@ db.exec(`
     first_seen        INTEGER NOT NULL,
     last_seen         INTEGER NOT NULL,
     closed_at         INTEGER,
-    close_reason      TEXT -- 'pending' (vanished, awaiting confirmation) | 'gone' (sold) | 'repriced' | 'withdrawn' | 'expired'
+    close_reason      TEXT -- 'pending' (vanished, awaiting confirmation) | 'gone' (sold) | 'repriced' | 'withdrawn'
+                           -- | 'upgraded' (consumed upgrading/compounding) | 'expired'
   );
   CREATE INDEX IF NOT EXISTS listings_open ON listings (merchant) WHERE closed_at IS NULL;
   CREATE INDEX IF NOT EXISTS listings_item ON listings (item, level, variant, closed_at);
