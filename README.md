@@ -155,7 +155,7 @@ against spreadsheet formulas in the CSV exports). Responses carry a strict Conte
 anti-framing, `nosniff`, HSTS and referrer headers. The API is rate-limited per client IP: set
 `TRUST_PROXY` correctly when behind a proxy. The compose file runs the container as a non-root user with
 a read-only filesystem, no Linux capabilities and `no-new-privileges`. Report security issues privately
-through GitHub's "Report a vulnerability" on the repository.
+privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
