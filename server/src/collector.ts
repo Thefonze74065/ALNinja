@@ -19,7 +19,10 @@ interface Offer {
 
 interface OpenListing extends Offer {
   id: number;
+  first_seen: number;
 }
+
+type Stats = { updated: number; opened: number; closed: number; sales: number };
 
 /** Turns a raw merchant slot into a priced offer, or null if it shouldn't count toward prices. */
 export function toOffer(slot: string, s: MerchantSlot | null): Offer | null {
@@ -37,9 +40,9 @@ export function toOffer(slot: string, s: MerchantSlot | null): Offer | null {
   };
 }
 
-const sameOffer = (a: Offer, b: Offer) =>
-  a.slot === b.slot && a.side === b.side && a.item === b.item &&
-  a.level === b.level && a.variant === b.variant;
+const sameGoods = (a: Offer, b: Offer) =>
+  a.side === b.side && a.item === b.item && a.level === b.level && a.variant === b.variant;
+const sameOffer = (a: Offer, b: Offer) => a.slot === b.slot && sameGoods(a, b);
 
 const stmts = {
   getMerchant: db.prepare("SELECT last_seen FROM merchants WHERE id = ?"),
@@ -50,9 +53,15 @@ const stmts = {
       server_identifier = excluded.server_identifier, map = excluded.map,
       x = excluded.x, y = excluded.y, last_seen = excluded.last_seen`),
   openListings: db.prepare(`
-    SELECT id, slot, side, item, level, variant, price, quantity
+    SELECT id, slot, side, item, level, variant, price, quantity, first_seen
     FROM listings WHERE merchant = ? AND closed_at IS NULL`),
-  touch: db.prepare("UPDATE listings SET last_seen = ?, quantity = ? WHERE id = ?"),
+  touch: db.prepare("UPDATE listings SET last_seen = ?, quantity = ?, slot = ? WHERE id = ?"),
+  marketPrice: db.prepare(`
+    SELECT sell_p25 FROM price_history WHERE item = ? AND region = 'ALL' AND level = ? AND variant = ?
+    ORDER BY bucket DESC LIMIT 1`),
+  insertSale: db.prepare(`
+    INSERT INTO sales (listing_id, merchant, side, item, level, variant, region, price, quantity, listed_at, at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   close: db.prepare("UPDATE listings SET closed_at = ?, close_reason = ? WHERE id = ?"),
   insert: db.prepare(`
     INSERT INTO listings (merchant, slot, side, item, level, variant, price, quantity, initial_quantity,
@@ -74,8 +83,21 @@ const stmts = {
     INSERT INTO polls (fetched_at, merchants, updated, opened, closed, error) VALUES (?, ?, ?, ?, ?, ?)`),
 };
 
-/** Reconciles one merchant's current stand against its open listings. */
-function syncMerchant(m: Merchant, stats: { updated: number; opened: number; closed: number }) {
+/**
+ * Stands are also used as storage: items parked at absurd prices, or lowball buy orders, get pulled
+ * without ever trading. Only offers priced near the market count as sales.
+ */
+export const PLACEHOLDER_PRICE = 1e10;
+export const PLAUSIBLE_MARKUP = 3;
+function plausibleTrade(l: Offer): boolean {
+  const market = (stmts.marketPrice.get(l.item, l.level, l.variant) as { sell_p25: number | null } | undefined)
+    ?.sell_p25;
+  if (!market) return l.price < PLACEHOLDER_PRICE;
+  return l.side === "sell" ? l.price <= market * PLAUSIBLE_MARKUP : l.price >= market / PLAUSIBLE_MARKUP;
+}
+
+/** Reconciles one merchant's current stand against its open listings, recording estimated sales. */
+function syncMerchant(m: Merchant, stats: Stats) {
   const seen = Date.parse(m.lastSeen);
   const prev = stmts.getMerchant.get(m.id) as { last_seen: number } | undefined;
   stmts.upsertMerchant.run(m.id, m.serverRegion, m.serverIdentifier, m.map, m.x, m.y, seen);
@@ -88,17 +110,45 @@ function syncMerchant(m: Merchant, stats: { updated: number; opened: number; clo
     .filter((o): o is Offer => o !== null);
   const open = stmts.openListings.all(m.id) as unknown as OpenListing[];
 
+  const sale = (l: OpenListing, quantity: number) => {
+    stmts.insertSale.run(l.id, m.id, l.side, l.item, l.level, l.variant, m.serverRegion, l.price, quantity,
+      l.first_seen, seen);
+    stats.sales++;
+  };
   const unmatched = new Set(current);
-  for (const listing of open) {
-    const match = current.find((o) => unmatched.has(o) && sameOffer(o, listing) && o.price === listing.price);
-    if (match) {
-      unmatched.delete(match);
-      stmts.touch.run(seen, match.quantity, listing.id);
-    } else {
-      const repriced = current.some((o) => sameOffer(o, listing));
-      stmts.close.run(seen, repriced ? "repriced" : "gone", listing.id);
-      stats.closed++;
-    }
+  const take = (match: (o: Offer) => boolean) => {
+    const o = current.find((o) => unmatched.has(o) && match(o));
+    if (o) unmatched.delete(o);
+    return o;
+  };
+  const keep = (l: OpenListing, o: Offer) => {
+    stmts.touch.run(seen, o.quantity, o.slot, l.id);
+    if (o.quantity < l.quantity && plausibleTrade(l)) sale(l, l.quantity - o.quantity);
+  };
+
+  // Same slot first, then the same goods at the same price moved to another slot.
+  const unplaced: OpenListing[] = [];
+  for (const l of open) {
+    const o = take((o) => sameOffer(o, l) && o.price === l.price);
+    if (o) keep(l, o);
+    else unplaced.push(l);
+  }
+  const gone: OpenListing[] = [];
+  for (const l of unplaced) {
+    const o = take((o) => sameGoods(o, l) && o.price === l.price);
+    if (o) keep(l, o);
+    else gone.push(l);
+  }
+
+  // A stand that emptied completely was packed up, not sold out between two polls.
+  const standClosed = current.length === 0 && gone.length >= 3;
+  for (const l of gone) {
+    const reason = standClosed || !plausibleTrade(l)
+      ? "withdrawn"
+      : current.some((o) => sameOffer(o, l)) ? "repriced" : "gone";
+    stmts.close.run(seen, reason, l.id);
+    if (reason === "gone") sale(l, l.quantity);
+    stats.closed++;
   }
   for (const o of unmatched) {
     stmts.insert.run(m.id, o.slot, o.side, o.item, o.level, o.variant, o.price, o.quantity, o.quantity,
@@ -165,7 +215,7 @@ export async function poll() {
     const { merchants, raw } = await fetchMerchants();
     if (config.archiveRaw) archive(raw, now);
 
-    const stats = { updated: 0, opened: 0, closed: 0 };
+    const stats: Stats = { updated: 0, opened: 0, closed: 0, sales: 0 };
     const keys = transaction(() => {
       for (const m of merchants) syncMerchant(m, stats);
 
@@ -184,7 +234,7 @@ export async function poll() {
       return keys;
     });
     console.log(`[poll] ${merchants.length} merchants (${stats.updated} updated), ` +
-      `+${stats.opened}/-${stats.closed} listings, ${keys} priced items`);
+      `+${stats.opened}/-${stats.closed} listings, ${stats.sales} sales, ${keys} priced items`);
   } catch (err) {
     const msg = (err as Error).message;
     console.error(`[poll] failed: ${msg}`);

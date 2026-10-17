@@ -66,7 +66,7 @@ db.exec(`
     first_seen        INTEGER NOT NULL,
     last_seen         INTEGER NOT NULL,
     closed_at         INTEGER,
-    close_reason      TEXT -- 'gone' | 'repriced' | 'expired'
+    close_reason      TEXT -- 'gone' (sold) | 'repriced' | 'withdrawn' | 'expired'
   );
   CREATE INDEX IF NOT EXISTS listings_open ON listings (merchant) WHERE closed_at IS NULL;
   CREATE INDEX IF NOT EXISTS listings_item ON listings (item, level, variant, closed_at);
@@ -103,6 +103,50 @@ if (migrating) {
     `);
   });
   console.log("[db] migrated price_history to per-region schema");
+}
+
+// Estimated trades: a listing's quantity dropping, or the listing disappearing while the rest of the
+// stand stays up. side = 'sell' means the merchant sold to a player; 'buy' means a buy order was filled.
+const hadSales = (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sales'").get()) != null;
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sales (
+    id         INTEGER PRIMARY KEY,
+    listing_id INTEGER NOT NULL REFERENCES listings (id),
+    merchant   TEXT NOT NULL,
+    side       TEXT NOT NULL,
+    item       TEXT NOT NULL,
+    level      INTEGER NOT NULL,
+    variant    TEXT NOT NULL,
+    region     TEXT,
+    price      INTEGER NOT NULL,
+    quantity   INTEGER NOT NULL,
+    listed_at  INTEGER NOT NULL, -- the listing's first_seen, for time-to-sell
+    at         INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS sales_item ON sales (item, at);
+  CREATE INDEX IF NOT EXISTS sales_at ON sales (at);
+`);
+if (!hadSales) {
+  // Listings closed as 'gone' before sales were tracked; partial sales from that period are unknown.
+  // Same plausibility rule as the collector: near-market prices only, else it was a withdrawal.
+  db.exec(`
+    UPDATE listings SET close_reason = 'withdrawn'
+    WHERE close_reason = 'gone' AND NOT (
+      CASE WHEN (SELECT sell_p25 FROM price_history ph WHERE ph.item = listings.item AND ph.region = 'ALL'
+                 AND ph.level = listings.level AND ph.variant = listings.variant ORDER BY bucket DESC LIMIT 1)
+           IS NULL THEN price < 1e10
+      ELSE CASE side
+        WHEN 'sell' THEN price <= 3 * (SELECT sell_p25 FROM price_history ph WHERE ph.item = listings.item
+          AND ph.region = 'ALL' AND ph.level = listings.level AND ph.variant = listings.variant
+          ORDER BY bucket DESC LIMIT 1)
+        ELSE price * 3 >= (SELECT sell_p25 FROM price_history ph WHERE ph.item = listings.item
+          AND ph.region = 'ALL' AND ph.level = listings.level AND ph.variant = listings.variant
+          ORDER BY bucket DESC LIMIT 1)
+      END END);
+    INSERT INTO sales (listing_id, merchant, side, item, level, variant, region, price, quantity, listed_at, at)
+    SELECT id, merchant, side, item, level, variant, server_region, price, quantity, first_seen, closed_at
+    FROM listings WHERE close_reason = 'gone';
+  `);
 }
 
 export function transaction<T>(fn: () => T): T {

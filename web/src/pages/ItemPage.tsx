@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type GameMeta, type ItemDetail } from "../api";
+import { api, type GameMeta, type ItemDetail, type Variant } from "../api";
+import { itemHref } from "../components/ItemCell";
 import { ItemIcon } from "../components/ItemIcon";
 import { TimeChart, type Series } from "../components/TimeChart";
-import { ago, gold, variantLabel } from "../format";
-import { Change, itemHref } from "./Overview";
+import { ago, duration, gold, percent, perDay, variantLabel } from "../format";
+import { Change } from "./Overview";
 
 const RANGES = [
   { label: "24h", days: 1 },
@@ -13,7 +14,10 @@ const RANGES = [
   { label: "1y", days: 365 },
 ];
 
+const DAY = 86_400_000;
 const count = (v: number | null) => (v == null ? "—" : String(Math.round(v)));
+const sameVariant = (a: { level: number; variant: string }, b: { level: number; variant: string } | null) =>
+  b != null && a.level === b.level && a.variant === b.variant;
 
 export function ItemPage({
   item,
@@ -44,52 +48,76 @@ export function ItemPage({
 
   const m = detail?.meta ?? meta?.items[item] ?? null;
   const leveled = Boolean(m?.upgradeable || m?.compoundable);
+  const labelOf = (v: { level: number; variant: string }) => variantLabel(v.level, v.variant, leveled) || "base";
 
-  // Variant from the URL, else the one with the most listings right now.
-  const selected = useMemo(() => {
+  // Variant from the URL, else the one with the most merchants right now.
+  const selected = useMemo((): Variant | null => {
     if (!detail?.variants.length) return null;
     const level = params.get("level");
     const variant = params.get("variant") ?? "";
     const fromUrl = detail.variants.find((v) => String(v.level) === level && v.variant === variant);
     if (fromUrl) return fromUrl;
-    const latestCount = (h: ItemDetail["variants"][number]["history"]) => {
-      const p = h[h.length - 1];
-      return p ? p.sellCount + p.buyCount : 0;
+    const latestCount = (v: Variant) => {
+      const p = v.points[v.points.length - 1];
+      return p ? p.sellers + p.buyers : 0;
     };
-    return [...detail.variants].sort((a, b) => latestCount(b.history) - latestCount(a.history))[0];
+    return [...detail.variants].sort((a, b) => latestCount(b) - latestCount(a))[0];
   }, [detail, params]);
 
   const chart = useMemo(() => {
     if (!selected) return null;
-    const h = selected.history;
+    const h = selected.points;
     const price: Series[] = [
-      { label: "Price (lower quartile)", color: "--series-1", values: h.map((p) => p.p25) },
+      { label: "Price (lower quartile)", color: "--series-1", values: h.map((p) => (p.sellers ? p.price : null)) },
       { label: "Median ask", color: "--series-3", values: h.map((p) => p.median), dash: true },
-      { label: "Best bid", color: "--series-2", values: h.map((p) => p.buy) },
+      { label: "Best bid", color: "--series-2", values: h.map((p) => p.bestBid) },
     ];
-    const volume: Series[] = [{ label: "Merchants selling", color: "--series-1", values: h.map((p) => p.sellCount), bars: true }];
+    const merchants: Series[] = [
+      { label: "Merchants selling", color: "--series-1", values: h.map((p) => p.sellers), bars: true },
+    ];
     const latest = h[h.length - 1];
-    const first = h.find((p) => p.p25 != null);
+    const first = h.find((p) => p.sellers && p.price != null);
     return {
       times: h.map((p) => p.t),
       price,
-      volume,
+      merchants,
       latest,
-      change: latest?.p25 != null && first?.p25 ? (latest.p25 - first.p25) / first.p25 : null,
+      change: latest?.sellers && latest.price != null && first?.price ? (latest.price - first.price) / first.price : null,
     };
   }, [selected]);
+
+  const velocity = useMemo(() => detail?.velocity.find((v) => sameVariant(v, selected)) ?? null, [detail, selected]);
+
+  // Daily trade bars over the whole range, with empty days filled in.
+  const trades = useMemo(() => {
+    if (!velocity && !detail) return null;
+    const byDay = new Map((velocity?.daily ?? []).map((d) => [d.day, d]));
+    const today = Math.floor(Date.now() / DAY) * DAY;
+    const times: number[] = [];
+    for (let t = today - (Math.max(days, 1) - 1) * DAY; t <= today; t += DAY) times.push(t);
+    const sold = times.map((t) => byDay.get(t)?.sold ?? 0);
+    const bought = times.map((t) => byDay.get(t)?.bought ?? 0);
+    const totalSold = sold.reduce((a, b) => a + b, 0);
+    const totalBought = bought.reduce((a, b) => a + b, 0);
+    // Only show the buy-order series when there is one; a lone series fills the whole day.
+    const series: Series[] = totalBought
+      ? [
+          { label: "Sold by merchants", color: "--series-1", values: sold, bars: true, barAlign: -1 },
+          { label: "Bought via buy orders", color: "--series-2", values: bought, bars: true, barAlign: 1 },
+        ]
+      : [{ label: "Sold by merchants", color: "--series-1", values: sold, bars: true }];
+    return { times, series, totalSold, totalBought };
+  }, [velocity, detail, days]);
 
   const listings = useMemo(
     () =>
       (detail?.listings ?? [])
-        .filter((l) => selected && l.level === selected.level && l.variant === selected.variant)
+        .filter((l) => sameVariant(l, selected))
         .sort((a, b) => (a.side === b.side ? (a.side === "sell" ? a.price - b.price : b.price - a.price) : a.side === "sell" ? -1 : 1)),
     [detail, selected],
   );
-  const closed = useMemo(
-    () => (detail?.recentlyClosed ?? []).filter((l) => selected && l.level === selected.level && l.variant === selected.variant),
-    [detail, selected],
-  );
+  const sales = useMemo(() => (detail?.sales ?? []).filter((s) => sameVariant(s, selected)), [detail, selected]);
+  const rangeLabel = RANGES.find((r) => r.days === days)?.label;
 
   return (
     <section>
@@ -105,9 +133,9 @@ export function ItemPage({
         </div>
         {chart?.latest && (
           <div className="headline">
-            <div className="headline-value">{gold(chart.latest.p25 ?? chart.latest.buy)}</div>
+            <div className="headline-value">{gold(chart.latest.price)}</div>
             <div className="muted">
-              <Change value={chart.change} /> over {RANGES.find((r) => r.days === days)?.label}
+              <Change value={chart.change} /> over {rangeLabel}
               {region !== "ALL" && <> · {region}</>}
             </div>
           </div>
@@ -127,12 +155,8 @@ export function ItemPage({
             {detail.variants.length > 1 && (
               <nav className="tabs" aria-label="Variants">
                 {detail.variants.map((v) => (
-                  <a
-                    key={`${v.level}|${v.variant}`}
-                    href={itemHref(item, v.level, v.variant)}
-                    className={v === selected ? "active" : ""}
-                  >
-                    {variantLabel(v.level, v.variant, leveled) || "base"}
+                  <a key={`${v.level}|${v.variant}`} href={itemHref(item, v.level, v.variant)} className={v === selected ? "active" : ""}>
+                    {labelOf(v)}
                   </a>
                 ))}
               </nav>
@@ -146,20 +170,90 @@ export function ItemPage({
             </nav>
           </div>
 
+          <div className="stats">
+            <div className="stat">
+              <div className="stat-label">Sold ({rangeLabel})</div>
+              <div className="stat-value">{trades ? gold(trades.totalSold) : "—"}</div>
+              <div className="stat-sub muted">{trades && trades.totalSold ? `${perDay(trades.totalSold / days)} / day` : "units"}</div>
+            </div>
+            <div className="stat">
+              <div className="stat-label">Bought by buy orders</div>
+              <div className="stat-value">{trades ? gold(trades.totalBought) : "—"}</div>
+              <div className="stat-sub muted">units</div>
+            </div>
+            <div className="stat">
+              <div className="stat-label">Median time to sell</div>
+              <div className="stat-value">{duration(velocity?.medianHoursToSell)}</div>
+              <div className="stat-sub muted">from listing to sold</div>
+            </div>
+            <div className="stat">
+              <div className="stat-label">Merchants now</div>
+              <div className="stat-value">{chart.latest?.sellers ?? 0}</div>
+              <div className="stat-sub muted">{chart.latest?.buyers ?? 0} buying</div>
+            </div>
+          </div>
+
           <div className="panel">
             <h2>Price</h2>
             <TimeChart times={chart.times} series={chart.price} format={gold} />
           </div>
+          {trades && (
+            <div className="panel">
+              <h2>Trades per day</h2>
+              <p className="muted small">Estimated units traded at stands each day (UTC).</p>
+              <TimeChart times={trades.times} series={trades.series} format={count} height={180} daily />
+            </div>
+          )}
+          <div className="panel">
+            <h2>Time to sell by price</h2>
+            <p className="muted small">
+              Sell listings opened in the last {rangeLabel}, grouped by asking price relative to the market price when
+              they were listed. <em>Sell-through</em> is the share of closed listings that sold rather than being
+              pulled or repriced. Times are limited by how often a merchant's data refreshes.
+            </p>
+            {velocity?.bands.length ? (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Price vs market</th>
+                      <th className="num">Listed</th>
+                      <th className="num">Sold</th>
+                      <th className="num hide-sm">Pulled</th>
+                      <th className="num hide-sm">Still up</th>
+                      <th className="num">Sell-through</th>
+                      <th className="num">Median time to sell</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {velocity.bands.map((b) => (
+                      <tr key={b.band}>
+                        <td>{b.band}</td>
+                        <td className="num">{b.listings}</td>
+                        <td className="num">{b.sold}</td>
+                        <td className="num hide-sm">{b.pulled}</td>
+                        <td className="num hide-sm">{b.open}</td>
+                        <td className="num">{b.sellThrough == null ? "—" : percent(b.sellThrough).replace("+", "")}</td>
+                        <td className="num">{duration(b.medianHoursToSell)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="muted">No listings opened in this range yet.</p>
+            )}
+          </div>
           <div className="panel">
             <h2>Merchants selling</h2>
-            <TimeChart times={chart.times} series={chart.volume} format={count} height={140} />
+            <TimeChart times={chart.times} series={chart.merchants} format={count} height={140} />
           </div>
         </>
       )}
 
       {detail && (
         <div className="panel">
-          <h2>Current listings {selected && <span className="muted">({variantLabel(selected.level, selected.variant, leveled) || "base"})</span>}</h2>
+          <h2>Current listings {selected && <span className="muted">({labelOf(selected)})</span>}</h2>
           {listings.length === 0 ? (
             <p className="muted">No open listings.</p>
           ) : (
@@ -178,14 +272,14 @@ export function ItemPage({
                 </thead>
                 <tbody>
                   {listings.map((l) => (
-                    <tr key={`${l.merchant}|${l.side}|${l.price}|${l.first_seen}`}>
+                    <tr key={`${l.merchant}|${l.side}|${l.price}|${l.listedAt}`}>
                       <td><span className={`side side-${l.side}`}>{l.side === "sell" ? "Selling" : "Buying"}</span></td>
                       <td>{l.merchant}</td>
-                      <td title={`${l.map} (${Math.round(l.x)}, ${Math.round(l.y)})`}>{l.server_region} {l.server_identifier}</td>
+                      <td title={`${l.map} (${Math.round(l.x)}, ${Math.round(l.y)})`}>{l.region} {l.server}</td>
                       <td className="num price">{gold(l.price)}</td>
                       <td className="num">{l.quantity}</td>
-                      <td className="hide-sm muted">{ago(l.first_seen)}</td>
-                      <td className="muted">{ago(l.last_seen)}</td>
+                      <td className="hide-sm muted">{ago(l.listedAt)}</td>
+                      <td className="muted">{ago(l.merchantSeenAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -195,39 +289,44 @@ export function ItemPage({
         </div>
       )}
 
-      {closed.length > 0 && (
+      {detail && (
         <div className="panel">
-          <h2>Recently removed</h2>
+          <h2>Recent sales</h2>
           <p className="muted small">
-            Listings that disappeared from a merchant's stand: usually sold, sometimes withdrawn. Repriced listings
-            reappear above at their new price.
+            Estimated: stock that left a stand priced near the market. Quantity drops count as partial sales.
           </p>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Side</th>
-                  <th>Merchant</th>
-                  <th className="num">Price</th>
-                  <th className="num">Qty</th>
-                  <th>Outcome</th>
-                  <th>When</th>
-                </tr>
-              </thead>
-              <tbody>
-                {closed.map((l) => (
-                  <tr key={`${l.merchant}|${l.side}|${l.price}|${l.first_seen}`}>
-                    <td><span className={`side side-${l.side}`}>{l.side === "sell" ? "Sell" : "Buy"}</span></td>
-                    <td>{l.merchant}</td>
-                    <td className="num price">{gold(l.price)}</td>
-                    <td className="num">{l.initial_quantity}</td>
-                    <td className="muted">{l.close_reason === "repriced" ? "Repriced" : "Removed"}</td>
-                    <td className="muted">{ago(l.closed_at)}</td>
+          {sales.length === 0 ? (
+            <p className="muted">No sales seen in the last {rangeLabel}.</p>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Trade</th>
+                    <th>Merchant</th>
+                    <th className="hide-sm">Region</th>
+                    <th className="num">Price</th>
+                    <th className="num">Qty</th>
+                    <th className="num hide-sm">Time listed</th>
+                    <th>When</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {sales.map((s, i) => (
+                    <tr key={`${s.merchant}|${s.at}|${i}`}>
+                      <td><span className={`side side-${s.side}`}>{s.side === "sell" ? "Sold" : "Bought"}</span></td>
+                      <td>{s.merchant}</td>
+                      <td className="hide-sm">{s.region ?? "—"}</td>
+                      <td className="num price">{gold(s.price)}</td>
+                      <td className="num">{s.quantity}</td>
+                      <td className="num hide-sm muted">{duration((s.at - s.listedAt) / 3_600_000)}</td>
+                      <td className="muted">{ago(s.at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </section>

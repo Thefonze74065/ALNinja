@@ -96,8 +96,23 @@ main {
 .brand-mark {
   color: var(--accent);
 }
-.tagline {
-  color: var(--text-muted);
+.mainnav {
+  display: flex;
+  gap: 4px;
+  align-self: center;
+}
+.mainnav a {
+  padding: 4px 10px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+.mainnav a:hover {
+  background: var(--surface-2);
+}
+.mainnav a.active {
+  color: var(--text-primary);
+  background: var(--accent-bg);
 }
 .tabs.region {
   margin: 0 0 0 auto;
@@ -309,6 +324,84 @@ th button {
   font-size: 12px;
 }
 
+.page-title {
+  margin: 0;
+  font-size: 22px;
+}
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 0 16px;
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.stat {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.stat-label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+}
+.stat-sub {
+  font-size: 12px;
+}
+td.wrap {
+  white-space: normal;
+  min-width: 180px;
+}
+
+/* API docs */
+.docs > p {
+  max-width: 80ch;
+}
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+pre {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  background: var(--surface-2);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.callout {
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-bg);
+  border-radius: 0 8px 8px 0;
+}
+.fields {
+  margin: 0;
+}
+.fields > div {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) 1fr;
+  gap: 4px 16px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--grid);
+}
+.fields > div:last-child {
+  border-bottom: none;
+}
+.fields dt,
+.fields dd {
+  margin: 0;
+}
+
 /* Item page */
 .back {
   display: inline-block;
@@ -366,11 +459,17 @@ th button {
   color: var(--text-secondary);
 }
 
-@media (max-width: 640px) {
-  .hide-sm {
+@media (max-width: 900px) {
+  .hide-md {
     display: none;
   }
-  .tagline {
+}
+
+@media (max-width: 640px) {
+  .fields > div {
+    grid-template-columns: 1fr;
+  }
+  .hide-sm {
     display: none;
   }
   .tabs.region {

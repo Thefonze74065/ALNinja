@@ -23,20 +23,24 @@ export interface GameMeta {
   items: Record<string, ItemMeta>;
 }
 
-export interface OverviewRow {
+export interface MarketRow {
   item: string;
   name: string;
   category: string;
   level: number;
   variant: string;
   price: number | null;
-  sellMin: number | null;
-  buyMax: number | null;
-  sellCount: number;
-  buyCount: number;
+  lowest: number | null;
+  median: number | null;
+  bestBid: number | null;
+  sellers: number;
+  buyers: number;
   quantity: number;
   npcValue: number | null;
+  change24h: number | null;
   change7d: number | null;
+  soldPerDay: number;
+  boughtPerDay: number;
   sparkline: (number | null)[];
   updated: number;
   stale: boolean;
@@ -44,50 +48,66 @@ export interface OverviewRow {
 
 export interface HistoryPoint {
   t: number;
-  min: number | null;
-  p25: number | null;
+  price: number | null;
+  lowest: number | null;
   median: number | null;
-  buy: number | null;
-  sellCount: number;
-  buyCount: number;
+  bestBid: number | null;
+  sellers: number;
+  buyers: number;
   quantity: number;
 }
 
 export interface Variant {
   level: number;
   variant: string;
-  history: HistoryPoint[];
+  points: HistoryPoint[];
 }
 
-export interface OpenListing {
+export interface PriceBand {
+  band: string;
+  listings: number;
+  sold: number;
+  pulled: number;
+  open: number;
+  sellThrough: number | null;
+  medianHoursToSell: number | null;
+}
+
+export interface Velocity {
+  level: number;
+  variant: string;
+  daily: { day: number; sold: number; bought: number; trades: number }[];
+  bands: PriceBand[];
+  medianHoursToSell: number | null;
+}
+
+export interface Listing {
   merchant: string;
   side: "sell" | "buy";
   level: number;
   variant: string;
   price: number;
   quantity: number;
-  first_seen: number;
-  last_seen: number;
-  server_region: string;
-  server_identifier: string;
+  region: string;
+  server: string;
   map: string;
   x: number;
   y: number;
+  listedAt: number;
+  merchantSeenAt: number;
 }
 
-export interface ClosedListing {
-  merchant: string;
+export interface Sale {
+  item: string;
   side: "sell" | "buy";
   level: number;
   variant: string;
   price: number;
-  initial_quantity: number;
   quantity: number;
-  first_seen: number;
-  closed_at: number;
-  close_reason: "gone" | "repriced";
-  server_region: string;
-  server_identifier: string;
+  merchant: string;
+  region: string | null;
+  listedAt: number;
+  at: number;
 }
 
 export interface ItemDetail {
@@ -95,8 +115,16 @@ export interface ItemDetail {
   region: string;
   meta: ItemMeta | null;
   variants: Variant[];
-  listings: OpenListing[];
-  recentlyClosed: ClosedListing[];
+  velocity: Velocity[];
+  listings: Listing[];
+  sales: Sale[];
+}
+
+export interface Movers {
+  window: "24h" | "7d";
+  gainers: MarketRow[];
+  losers: MarketRow[];
+  mostTraded: MarketRow[];
 }
 
 export interface Status {
@@ -119,7 +147,8 @@ async function get<T>(path: string): Promise<T> {
 export const api = {
   meta: () => get<GameMeta>("/meta"),
   status: () => get<Status>("/status"),
-  overview: (region: string) => get<OverviewRow[]>(`/overview?region=${region}`),
+  overview: (region: string) => get<MarketRow[]>(`/overview?region=${region}`),
+  movers: (region: string, window: string) => get<Movers>(`/movers?region=${region}&window=${window}`),
   item: (item: string, days: number, region: string) =>
     get<ItemDetail>(`/items/${encodeURIComponent(item)}?days=${days}&region=${region}`),
 };

@@ -37,3 +37,17 @@ export function variantLabel(level: number, variant: string, upgradeable: boolea
   if (variant) parts.push(variant);
   return parts.join(" ");
 }
+
+/** Units per day: one decimal below 10, whole numbers above, dash for none. */
+export function perDay(n: number | null | undefined): string {
+  if (!n) return "—";
+  return n < 10 ? String(Number(n.toFixed(1))) : gold(Math.round(n));
+}
+
+/** A span of hours as 45m / 6h / 2.5d. */
+export function duration(hours: number | null | undefined): string {
+  if (hours == null) return "—";
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))}m`;
+  if (hours < 48) return `${Number(hours.toFixed(hours < 10 ? 1 : 0))}h`;
+  return `${Number((hours / 24).toFixed(1))}d`;
+}

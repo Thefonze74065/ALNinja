@@ -23,4 +23,8 @@ export const config = {
   freshHours: num("FRESH_HOURS", 48),
   // Keep a gzipped copy of every raw /merchants response so history can be reprocessed later.
   archiveRaw: (process.env.ARCHIVE_RAW ?? "true") !== "false",
+  // Per-IP request budget for /api; 0 disables limiting.
+  rateLimitPerMinute: num("RATE_LIMIT_PER_MINUTE", 120),
+  // Behind a reverse proxy / tunnel, take the client IP from X-Forwarded-For.
+  trustProxy: process.env.TRUST_PROXY === "true",
 };

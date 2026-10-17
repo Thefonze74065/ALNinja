@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { api, type GameMeta, type Status } from "./api";
 import { ago } from "./format";
+import { ApiDocs } from "./pages/ApiDocs";
 import { ItemPage } from "./pages/ItemPage";
+import { Movers } from "./pages/Movers";
 import { Overview } from "./pages/Overview";
 
-/** Minimal hash router: "#/" is the overview, "#/item/<id>?level=2&variant=shiny" an item. */
+/** Minimal hash router: "#/" overview, "#/movers", "#/api", "#/item/<id>?level=2&variant=shiny". */
 function useRoute() {
   const [hash, setHash] = useState(location.hash);
   useEffect(() => {
@@ -53,6 +55,7 @@ export function App() {
     api.status().then(setStatus, console.error);
   }, []);
 
+  const page = parts[0] === "movers" ? "movers" : parts[0] === "api" ? "api" : parts[0] === "item" ? "item" : "prices";
   const lastPoll = status?.lastSuccessfulPoll;
   const failing = status?.lastPoll?.error;
 
@@ -62,7 +65,11 @@ export function App() {
         <a href="#/" className="brand">
           <span className="brand-mark">AL</span>Ninja
         </a>
-        <span className="tagline">Adventure Land market prices</span>
+        <nav className="mainnav" aria-label="Pages">
+          <a href="#/" className={page === "prices" ? "active" : ""}>Prices</a>
+          <a href="#/movers" className={page === "movers" ? "active" : ""}>Movers</a>
+          <a href="#/api" className={page === "api" ? "active" : ""}>API</a>
+        </nav>
         <nav className="tabs region" aria-label="Server region">
           {regions.map((r) => (
             <button key={r} type="button" className={r === region ? "active" : ""} onClick={() => setRegion(r)}>
@@ -80,8 +87,12 @@ export function App() {
         </span>
       </header>
       <main>
-        {parts[0] === "item" && parts[1] ? (
+        {page === "item" && parts[1] ? (
           <ItemPage item={decodeURIComponent(parts[1])} params={params} meta={meta} region={region} />
+        ) : page === "movers" ? (
+          <Movers meta={meta} region={region} trackingSince={status?.tracking_since ?? null} />
+        ) : page === "api" ? (
+          <ApiDocs />
         ) : (
           <Overview meta={meta} region={region} />
         )}

@@ -1,18 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type GameMeta, type OverviewRow } from "../api";
-import { ItemIcon } from "../components/ItemIcon";
+import { api, type GameMeta, type MarketRow } from "../api";
+import { ItemCell } from "../components/ItemCell";
 import { Sparkline } from "../components/Sparkline";
-import { gold, percent, variantLabel } from "../format";
+import { gold, percent, perDay } from "../format";
 
 const CATEGORIES = ["All", "Weapons", "Armor", "Accessories", "Materials", "Consumables", "Scrolls", "Cosmetics", "Other"];
 
-type SortKey = "name" | "price" | "buyMax" | "sellCount" | "change7d";
-
-export function itemHref(item: string, level: number, variant: string) {
-  const q = new URLSearchParams({ level: String(level) });
-  if (variant) q.set("variant", variant);
-  return `#/item/${encodeURIComponent(item)}?${q}`;
-}
+type SortKey = "name" | "price" | "bestBid" | "sellers" | "soldPerDay" | "change24h" | "change7d";
 
 export function Change({ value }: { value: number | null }) {
   if (value == null || Math.abs(value) < 0.0005) return <span className="change flat">{value == null ? "—" : "0%"}</span>;
@@ -25,12 +19,12 @@ export function Change({ value }: { value: number | null }) {
 }
 
 export function Overview({ meta, region }: { meta: GameMeta | null; region: string }) {
-  const [rows, setRows] = useState<OverviewRow[] | null>(null);
+  const [rows, setRows] = useState<MarketRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState("All");
   const [search, setSearch] = useState("");
   const [hideThin, setHideThin] = useState(false);
-  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "sellCount", desc: true });
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "sellers", desc: true });
 
   useEffect(() => {
     let current = true;
@@ -56,7 +50,7 @@ export function Overview({ meta, region }: { meta: GameMeta | null; region: stri
     const filtered = rows.filter(
       (r) =>
         (category === "All" || r.category === category) &&
-        (!hideThin || r.sellCount + r.buyCount >= 3) &&
+        (!hideThin || r.sellers + r.buyers >= 3) &&
         (!q || r.name.toLowerCase().includes(q) || r.item.toLowerCase().includes(q)),
     );
     const dir = sort.desc ? -1 : 1;
@@ -68,8 +62,8 @@ export function Overview({ meta, region }: { meta: GameMeta | null; region: stri
     });
   }, [rows, category, search, hideThin, sort]);
 
-  const header = (key: SortKey, label: string, className = "num") => (
-    <th className={className} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : "none"}>
+  const header = (key: SortKey, label: string, className = "num", title?: string) => (
+    <th className={className} title={title} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : "none"}>
       <button
         type="button"
         onClick={() => setSort((s) => ({ key, desc: s.key === key ? !s.desc : key !== "name" }))}
@@ -116,46 +110,40 @@ export function Overview({ meta, region }: { meta: GameMeta | null; region: stri
               <tr>
                 {header("name", "Item", "")}
                 {header("price", "Price")}
-                <th className="num hide-sm">Lowest</th>
-                {header("buyMax", "Best bid")}
-                {header("sellCount", "Sellers")}
-                <th className="hide-sm">Last 7 days</th>
-                {header("change7d", "7d")}
+                <th className="num hide-md">Lowest</th>
+                {header("bestBid", "Best bid", "num hide-sm")}
+                {header("sellers", "Sellers")}
+                {header("soldPerDay", "Sold/day", "num", "Estimated units sold per day (7-day average)")}
+                <th className="hide-md">Last 7 days</th>
+                {header("change24h", "24h")}
+                {header("change7d", "7d", "num hide-sm")}
               </tr>
             </thead>
             <tbody>
-              {visible.map((r) => {
-                const m = meta?.items[r.item];
-                const label = variantLabel(r.level, r.variant, Boolean(m?.upgradeable || m?.compoundable));
-                const thin = r.sellCount + r.buyCount < 3;
-                return (
-                  <tr key={`${r.item}|${r.level}|${r.variant}`} className={thin ? "thin" : ""}>
-                    <td>
-                      <a className="item-cell" href={itemHref(r.item, r.level, r.variant)}>
-                        <ItemIcon icon={m?.icon} />
-                        <span>
-                          <span className="item-name">{r.name}</span>
-                          {label && <span className="badge">{label}</span>}
-                          {r.stale && <span className="badge badge-muted" title="No fresh listings in the last hour">stale</span>}
-                        </span>
-                      </a>
-                    </td>
-                    <td className="num price">{gold(r.price)}</td>
-                    <td className="num hide-sm">{gold(r.sellMin)}</td>
-                    <td className="num">{gold(r.buyMax)}</td>
-                    <td className="num" title={`${r.sellCount} merchants selling (${r.quantity} units), ${r.buyCount} buying`}>
-                      {r.sellCount}
-                      {r.buyCount > 0 && <span className="muted"> / {r.buyCount}</span>}
-                    </td>
-                    <td className="hide-sm">
-                      <Sparkline values={r.sparkline} />
-                    </td>
-                    <td className="num">
-                      <Change value={r.change7d} />
-                    </td>
-                  </tr>
-                );
-              })}
+              {visible.map((r) => (
+                <tr key={`${r.item}|${r.level}|${r.variant}`} className={r.sellers + r.buyers < 3 ? "thin" : ""}>
+                  <td>
+                    <ItemCell meta={meta} row={r} />
+                  </td>
+                  <td className="num price">{gold(r.price)}</td>
+                  <td className="num hide-md">{gold(r.lowest)}</td>
+                  <td className="num hide-sm">{gold(r.bestBid)}</td>
+                  <td className="num" title={`${r.sellers} merchants selling (${r.quantity} units), ${r.buyers} buying`}>
+                    {r.sellers}
+                    {r.buyers > 0 && <span className="muted"> / {r.buyers}</span>}
+                  </td>
+                  <td className="num">{perDay(r.soldPerDay)}</td>
+                  <td className="hide-md">
+                    <Sparkline values={r.sparkline} />
+                  </td>
+                  <td className="num">
+                    <Change value={r.change24h} />
+                  </td>
+                  <td className="num hide-sm">
+                    <Change value={r.change7d} />
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
           {visible.length === 0 && <p className="muted">No items match.</p>}
@@ -164,7 +152,8 @@ export function Overview({ meta, region }: { meta: GameMeta | null; region: stri
       <p className="footnote">
         <strong>Price</strong> is the lower-quartile asking price across recently seen merchants, counting each
         merchant's cheapest offer once, so a few overpriced stands don't skew it. Items with fewer than 3 merchants are
-        dimmed: treat those prices as rough. Sellers shows merchants selling / buying.
+        dimmed: treat those prices as rough. <strong>Sold/day</strong> is estimated from stock disappearing from
+        stands priced near the market. Changes need at least 2 sellers at both ends.
       </p>
     </section>
   );

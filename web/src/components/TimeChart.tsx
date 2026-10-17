@@ -8,7 +8,14 @@ export interface Series {
   values: (number | null)[];
   dash?: boolean;
   bars?: boolean;
+  /** Offset bars left (-1) or right (1) of the tick so two bar series sit side by side. */
+  barAlign?: -1 | 1;
 }
+
+const DAY_S = 86_400;
+// Daily buckets are UTC days; label them in UTC so a bar never lands on the neighbouring date.
+const utcDate = (seconds: number) =>
+  new Date(seconds * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 
 function cssVar(name: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -20,11 +27,13 @@ export function TimeChart({
   series,
   height = 280,
   format,
+  daily = false,
 }: {
   times: number[]; // ms
   series: Series[];
   height?: number;
   format: (v: number | null) => string;
+  daily?: boolean;
 }) {
   const el = useRef<HTMLDivElement>(null);
 
@@ -43,18 +52,30 @@ export function TimeChart({
         width: root.clientWidth,
         height,
         cursor: { points: { size: 8 } },
-        scales: { x: { time: true }, y: { range: (_u, min, max) => [Math.min(0, min), max * 1.08 || 1] } },
-        axes: [axis, { ...axis, size: 56, values: (_u, ticks) => ticks.map(format) }],
+        ...(daily ? { tzDate: (ts: number) => uPlot.tzDate(new Date(ts * 1000), "Etc/UTC") } : {}),
+        scales: {
+          // Daily bars get half a day of room on each side so the first and last aren't clipped.
+          x: daily ? { time: true, range: (_u, min, max) => [min - DAY_S / 2, max + DAY_S / 2] } : { time: true },
+          y: { range: (_u, min, max) => [Math.min(0, min), max * 1.08 || 1] },
+        },
+        axes: [
+          daily
+            ? { ...axis, incrs: [DAY_S, 2 * DAY_S, 7 * DAY_S, 14 * DAY_S, 30 * DAY_S], values: (_u, ticks) => ticks.map(utcDate) }
+            : axis,
+          { ...axis, size: 56, values: (_u, ticks) => ticks.map(format) },
+        ],
         legend: { live: true },
         series: [
-          { value: "{YYYY}-{MM}-{DD} {HH}:00" },
+          daily ? { value: (_u: uPlot, v: number) => (v == null ? "—" : utcDate(v)) } : { value: "{YYYY}-{MM}-{DD} {HH}:00" },
           ...series.map((s) => ({
             label: s.label,
             stroke: cssVar(s.color),
             width: 2,
             dash: s.dash ? [6, 4] : undefined,
             fill: s.bars ? cssVar(s.color) : undefined,
-            paths: s.bars ? uPlot.paths.bars!({ size: [0.8, 12], radius: 0.15 }) : undefined,
+            paths: s.bars
+              ? uPlot.paths.bars!({ size: [s.barAlign ? 0.4 : 0.8, 24], align: s.barAlign ?? 0, radius: 0.15 })
+              : undefined,
             points: { show: false },
             spanGaps: false,
             value: (_u: uPlot, v: number | null) => format(v),
@@ -80,7 +101,7 @@ export function TimeChart({
       scheme.removeEventListener("change", rebuild);
       plot.destroy();
     };
-  }, [times, series, height, format]);
+  }, [times, series, height, format, daily]);
 
   return <div className="chart" ref={el} />;
 }
