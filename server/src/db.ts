@@ -58,6 +58,7 @@ db.exec(`
     item              TEXT NOT NULL,
     level             INTEGER NOT NULL,
     variant           TEXT NOT NULL,
+    flags             TEXT NOT NULL DEFAULT '', -- 'gift', 'expires' (affect NPC value only)
     price             INTEGER NOT NULL,
     quantity          INTEGER NOT NULL,
     initial_quantity  INTEGER NOT NULL,
@@ -103,6 +104,11 @@ if (migrating) {
     `);
   });
   console.log("[db] migrated price_history to per-region schema");
+}
+
+// v0.3 listings had no flags column.
+if (!(db.prepare("PRAGMA table_info(listings)").all() as { name: string }[]).some((c) => c.name === "flags")) {
+  db.exec("ALTER TABLE listings ADD COLUMN flags TEXT NOT NULL DEFAULT ''");
 }
 
 // Estimated trades: a listing's quantity dropping, or the listing disappearing while the rest of the

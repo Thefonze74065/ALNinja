@@ -12,6 +12,7 @@
     "start": "node server/src/index.ts",
     "dev": "node --watch server/src/index.ts",
     "poll": "node server/src/index.ts --poll-once",
+    "test": "node --test --test-reporter=spec 'server/test/**/*.test.ts'",
     "typecheck": "tsc -p server && tsc -p web",
     "build": "npm --prefix web run build"
   },

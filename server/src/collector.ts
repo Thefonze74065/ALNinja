@@ -15,6 +15,8 @@ interface Offer {
   variant: string;
   price: number;
   quantity: number;
+  /** Comma-separated: 'gift' (NPCs pay 1 gold), 'expires' (NPCs pay 1/8). Not part of the price key. */
+  flags: string;
 }
 
 interface OpenListing extends Offer {
@@ -22,7 +24,7 @@ interface OpenListing extends Offer {
   first_seen: number;
 }
 
-type Stats = { updated: number; opened: number; closed: number; sales: number };
+export type Stats = { updated: number; opened: number; closed: number; sales: number };
 
 /** Turns a raw merchant slot into a priced offer, or null if it shouldn't count toward prices. */
 export function toOffer(slot: string, s: MerchantSlot | null): Offer | null {
@@ -37,11 +39,12 @@ export function toOffer(slot: string, s: MerchantSlot | null): Offer | null {
     variant: [s.p, s.data].filter((v) => typeof v === "string" && v).join("/"),
     price: Math.round(s.price),
     quantity: s.q ?? 1,
+    flags: [s.gift && "gift", s.expires && "expires"].filter(Boolean).join(","),
   };
 }
 
 const sameGoods = (a: Offer, b: Offer) =>
-  a.side === b.side && a.item === b.item && a.level === b.level && a.variant === b.variant;
+  a.side === b.side && a.item === b.item && a.level === b.level && a.variant === b.variant && a.flags === b.flags;
 const sameOffer = (a: Offer, b: Offer) => a.slot === b.slot && sameGoods(a, b);
 
 const stmts = {
@@ -53,7 +56,7 @@ const stmts = {
       server_identifier = excluded.server_identifier, map = excluded.map,
       x = excluded.x, y = excluded.y, last_seen = excluded.last_seen`),
   openListings: db.prepare(`
-    SELECT id, slot, side, item, level, variant, price, quantity, first_seen
+    SELECT id, slot, side, item, level, variant, price, quantity, flags, first_seen
     FROM listings WHERE merchant = ? AND closed_at IS NULL`),
   touch: db.prepare("UPDATE listings SET last_seen = ?, quantity = ?, slot = ? WHERE id = ?"),
   marketPrice: db.prepare(`
@@ -64,9 +67,9 @@ const stmts = {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   close: db.prepare("UPDATE listings SET closed_at = ?, close_reason = ? WHERE id = ?"),
   insert: db.prepare(`
-    INSERT INTO listings (merchant, slot, side, item, level, variant, price, quantity, initial_quantity,
+    INSERT INTO listings (merchant, slot, side, item, level, variant, flags, price, quantity, initial_quantity,
       server_region, server_identifier, first_seen, last_seen)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   staleMerchants: db.prepare(`
     SELECT DISTINCT m.id, m.last_seen FROM merchants m
     JOIN listings l ON l.merchant = m.id AND l.closed_at IS NULL`),
@@ -151,7 +154,7 @@ function syncMerchant(m: Merchant, stats: Stats) {
     stats.closed++;
   }
   for (const o of unmatched) {
-    stmts.insert.run(m.id, o.slot, o.side, o.item, o.level, o.variant, o.price, o.quantity, o.quantity,
+    stmts.insert.run(m.id, o.slot, o.side, o.item, o.level, o.variant, o.flags, o.price, o.quantity, o.quantity,
       m.serverRegion, m.serverIdentifier, seen, seen);
     stats.opened++;
   }
@@ -167,7 +170,7 @@ function quantile(sorted: number[], q: number): number {
  * a dozen slots at a silly price can't drag the quartiles around. Every offer feeds both
  * the 'ALL' index and the index for its merchant's current server region.
  */
-export function recomputePrices(now = Date.now()) {
+export function recomputePrices(now: number) {
   const rows = stmts.freshOpen.all(now - config.freshHours * HOUR) as unknown as
     (Offer & { merchant: string; region: string | null })[];
   type Group = { key: Offer; region: string; sell: Map<string, number>; buy: Map<string, number>; qty: number };
@@ -209,32 +212,39 @@ function archive(raw: string, at: Date) {
   fs.writeFileSync(path.join(dir, `${iso.slice(11, 19).replaceAll(":", "-")}.json.gz`), zlib.gzipSync(raw));
 }
 
+/**
+ * Applies one /merchants snapshot taken at `at` (ms). Deterministic given the database state and the
+ * snapshot, so replaying the raw archive in order reproduces what live polling recorded.
+ */
+export function ingest(merchants: Merchant[], at: number): Stats & { priced: number } {
+  const stats: Stats = { updated: 0, opened: 0, closed: 0, sales: 0 };
+  return transaction(() => {
+    for (const m of merchants) syncMerchant(m, stats);
+
+    // Merchants that dropped out of the feed (ALData only keeps a week) close their listings.
+    const present = new Set(merchants.map((m) => m.id));
+    for (const s of stmts.staleMerchants.all() as { id: string; last_seen: number }[]) {
+      if (present.has(s.id)) continue;
+      for (const l of stmts.openListings.all(s.id) as unknown as OpenListing[]) {
+        stmts.close.run(s.last_seen, "expired", l.id);
+        stats.closed++;
+      }
+    }
+
+    const priced = recomputePrices(at);
+    stmts.logPoll.run(at, merchants.length, stats.updated, stats.opened, stats.closed, null);
+    return { ...stats, priced };
+  });
+}
+
 export async function poll() {
   const now = new Date();
   try {
     const { merchants, raw } = await fetchMerchants();
     if (config.archiveRaw) archive(raw, now);
-
-    const stats: Stats = { updated: 0, opened: 0, closed: 0, sales: 0 };
-    const keys = transaction(() => {
-      for (const m of merchants) syncMerchant(m, stats);
-
-      // Merchants that dropped out of the feed (ALData only keeps a week) close their listings.
-      const present = new Set(merchants.map((m) => m.id));
-      for (const s of stmts.staleMerchants.all() as { id: string; last_seen: number }[]) {
-        if (present.has(s.id)) continue;
-        for (const l of stmts.openListings.all(s.id) as unknown as OpenListing[]) {
-          stmts.close.run(s.last_seen, "expired", l.id);
-          stats.closed++;
-        }
-      }
-
-      const keys = recomputePrices(now.getTime());
-      stmts.logPoll.run(now.getTime(), merchants.length, stats.updated, stats.opened, stats.closed, null);
-      return keys;
-    });
-    console.log(`[poll] ${merchants.length} merchants (${stats.updated} updated), ` +
-      `+${stats.opened}/-${stats.closed} listings, ${stats.sales} sales, ${keys} priced items`);
+    const r = ingest(merchants, now.getTime());
+    console.log(`[poll] ${merchants.length} merchants (${r.updated} updated), ` +
+      `+${r.opened}/-${r.closed} listings, ${r.sales} sales, ${r.priced} priced items`);
   } catch (err) {
     const msg = (err as Error).message;
     console.error(`[poll] failed: ${msg}`);

@@ -9,6 +9,8 @@ export interface MerchantSlot {
   p?: string | null; // title modifier: shiny, lucky, cavefound, ...
   data?: string; // contents of jars, e.g. the appearance stored in a cxjar
   giveaway?: number;
+  gift?: number; // gifted items sell to NPCs for 1 gold
+  expires?: string; // temporary items sell to NPCs for 1/8
   want?: unknown; // barter request instead of gold
   [key: string]: unknown;
 }

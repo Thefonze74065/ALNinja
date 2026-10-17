@@ -13,7 +13,7 @@ const dataDir = path.resolve(process.env.DATA_DIR ?? "./data");
 export const config = {
   port: num("PORT", 8080),
   dataDir,
-  dbPath: path.join(dataDir, "alninja.sqlite"),
+  dbPath: path.resolve(process.env.DB_PATH ?? path.join(dataDir, "alninja.sqlite")),
   rawDir: path.join(dataDir, "raw"),
   webDir: path.resolve(process.env.WEB_DIR ?? "./web/dist"),
   aldataUrl: (process.env.ALDATA_URL ?? "https://aldata.earthiverse.ca").replace(/\/$/, ""),
