@@ -34,22 +34,31 @@ refreshed daily and cached in `data/gamedata.json`.
 
 ## Running on Docker
 
-GitHub Actions builds the image on every push to `main` and publishes it as
+Anyone can run their own instance from the public image, without cloning the repo or logging in.
+GitHub Actions builds it on every push to `main` and publishes it as
 `ghcr.io/thefonze74065/alninja:latest` (plus `sha-<commit>` tags, and version tags for `v*` git tags).
-`docker-compose.yml` pulls that image:
+
+Quickest start:
+
+```sh
+docker run -d --name alninja -p 8080:8080 -v alninja-data:/data ghcr.io/thefonze74065/alninja:latest
+```
+
+Or with Compose: copy [`docker-compose.yml`](docker-compose.yml), set the volume path, then
 
 ```sh
 docker compose pull && docker compose up -d
 ```
 
-The repo is private, so its package is too. Either make the package public (GitHub → Packages →
-alninja → Package settings → Change visibility), or log the host in once with a classic personal
-access token that has `read:packages`: `docker login ghcr.io -u Thefonze74065`.
+Then open `http://<host>:8080`. Price history starts from your first poll, because ALData has no history
+to backfill from. Everything lives in the `/data` volume (SQLite database, game-data cache, raw archive),
+so keep it on persistent storage and back it up.
 
-Then open `http://<host>:8080`. Everything lives in the `/data` volume (SQLite database, game-data
-cache, raw archive). In `docker-compose.yml`, point it at a dataset, e.g.
-`/mnt/tank/apps/alninja:/data`. The compose file runs the container as `568:568` (TrueNAS's `apps` user), so that dataset must be
-writable by it; change `user:` if the dataset belongs to someone else. Without `user:` the image runs as 1000:1000.
+**Bind mounts and permissions:** the image runs as uid/gid `1000:1000`. If you mount a host directory,
+it must be writable by the container's user, or the app exits with "Data directory … is not writable".
+The included compose file sets `user: "568:568"`, TrueNAS SCALE's `apps` user, for a dataset such as
+`/mnt/tank/apps/alninja:/data`. Change `user:` to whoever owns your directory, or remove it to use
+1000:1000.
 
 | Variable | Default | |
 |---|---|---|
