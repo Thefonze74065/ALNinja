@@ -309,7 +309,7 @@ for (const p of prices) console.log(p.item, p.level, p.price, p.soldPerDay);`;
       <p>
         ALNinja's data is open to scripts. All endpoints are <code>GET</code>, return JSON, allow any origin (CORS),
         and accept <code>region=ALL|US|EU|ASIA</code> (default <code>ALL</code>). Prices are gold per unit; times are
-        Unix epoch milliseconds. Data refreshes every poll (about every 10 minutes) and responses are cached for 60
+        Unix epoch milliseconds. Data refreshes every poll (about every minute) and responses are cached for 60
         seconds, so there's no benefit to calling more than once a minute. Each IP gets 120 requests per minute.
       </p>
       {!secure && (

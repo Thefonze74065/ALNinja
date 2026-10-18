@@ -19,7 +19,7 @@ export const config = {
   webDir: path.resolve(process.env.WEB_DIR ?? "./web/dist"),
   aldataUrl: (process.env.ALDATA_URL ?? "https://aldata.earthiverse.ca").replace(/\/$/, ""),
   gameDataUrl: process.env.GAME_DATA_URL ?? "https://adventure.land/data.js",
-  pollIntervalMinutes: num("POLL_INTERVAL_MINUTES", 10),
+  pollIntervalMinutes: num("POLL_INTERVAL_MINUTES", 1),
   // Merchants whose ALData `lastSeen` is older than this are left out of price calculations.
   freshHours: num("FRESH_HOURS", 48),
   // Keep a gzipped copy of every raw /merchants response so history can be reprocessed later.

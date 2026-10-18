@@ -20,7 +20,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      POLL_INTERVAL_MINUTES: 10
+      POLL_INTERVAL_MINUTES: 1
       FRESH_HOURS: 48
       ARCHIVE_RAW: "true"
       # Behind Cloudflare (incl. a Cloudflare Tunnel) set this, or every visitor shares one rate limit.

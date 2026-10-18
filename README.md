@@ -54,7 +54,7 @@ history, so ALNinja keeps its own:
    `HOURLY_RETENTION_DAYS` are then removed from the database (only once archived); long-range charts use
    the daily summaries.
 7. **Raw archive**: every raw `/merchants` response is saved gzipped under `data/raw/YYYY-MM-DD/`
-   (~3 MB/day at 10-minute polls). This is the source of truth for [rebuilding](#rebuilding-from-the-raw-archive).
+   (~30 MB/day at 1-minute polls). This is the source of truth for [rebuilding](#rebuilding-from-the-raw-archive).
 
 Item names, categories and sprite icons come from the game's own `https://adventure.land/data.js`,
 refreshed daily and cached in `data/gamedata.json`.
@@ -93,7 +93,7 @@ The included compose file sets `user: "568:568"`, TrueNAS SCALE's `apps` user, f
 | Variable | Default | |
 |---|---|---|
 | `PORT` | `8080` | HTTP port |
-| `POLL_INTERVAL_MINUTES` | `10` | How often to poll ALData |
+| `POLL_INTERVAL_MINUTES` | `1` | How often to poll ALData (it refreshes merchants about once a minute) |
 | `FRESH_HOURS` | `48` | Ignore merchants not seen by ALData for longer than this |
 | `ARCHIVE_RAW` | `true` | Keep gzipped raw `/merchants` responses |
 | `REBUILD` | (unset) | Rebuild from the raw archive on startup, once per distinct value |
@@ -135,7 +135,7 @@ On startup the container rebuilds before it begins serving and polling, and reco
 
 If it says `rebuild: not requested`, the variable didn't reach the container. In Dockge, put it in
 the compose file's `environment:`; the separate `.env` box only feeds `${VAR}` substitution in the YAML.
-Expect roughly 3 minutes per month of history at 2-minute polling (under a minute at 10-minute polling). From a shell instead:
+Expect roughly 15-30 seconds per day of history at 1-minute polling. From a shell instead:
 `docker compose stop alninja && docker compose run --rm alninja node server/src/rebuild.ts && docker compose start alninja`.
 
 The rebuild writes a new database and CSV archive beside the live ones, swaps them in only when complete,
