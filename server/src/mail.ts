@@ -61,7 +61,10 @@ export class AdventureLandApi {
         this.auth = null;
         return this.call(method, body, false);
       }
-      throw new Error(`${method} failed (${res.status})`);
+      throw new Error(this.opts.email
+        ? `${method} failed (${res.status})`
+        : `${method} failed (${res.status}): AL_AUTH was rejected; copy a fresh session token ` +
+          '(in game: show_json(parent.user_id + "-" + parent.user_auth)) into AL_AUTH');
     }
     return data.infs[0];
   }

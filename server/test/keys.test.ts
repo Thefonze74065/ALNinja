@@ -75,6 +75,12 @@ describe("reporting keys by mail", () => {
     assert.ok(logs.some((l) => /PlayerE attached an item/.test(l)));
   });
 
+  test("a rejected AL_AUTH with no login to fall back on says how to fix it", async () => {
+    const al = fakeAdventureLand([], { expireFirst: true });
+    const api = new AdventureLandApi({ url: "https://al.test", email: null, password: null, auth: "42-tok" }, al.fetchImpl);
+    await assert.rejects(processKeyMail(api, "KeyBot", () => {}), /AL_AUTH was rejected; copy a fresh session token/);
+  });
+
   test("Authorization forms", () => {
     setKey("Revoked1", KEY);
     assert.equal(keyOwner(`Bearer PlayerA:wrong-key-wrong-key`), null);

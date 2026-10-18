@@ -102,7 +102,7 @@ The included compose file sets `user: "568:568"`, TrueNAS SCALE's `apps` user, f
 | `REPORT_TOKEN` | (unset) | Admin reporting key (`Authorization: Bearer <token>`) for your own characters; works without the key mail setup |
 | `KEY_MAIL_CHARACTER` | (unset) | Character players mail (subject `alninja_auth`, key as message) to get a public reporting key. Enables public reporting |
 | `AL_EMAIL` / `AL_PASSWORD` | (unset) | Login for the Adventure Land account that owns `KEY_MAIL_CHARACTER`, used only to read and delete key mail. Use a dedicated account |
-| `AL_AUTH` | (unset) | Alternative to email/password: that account's `auth` cookie from adventure.land (`<userID>-<token>`) |
+| `AL_AUTH` | (unset) | Alternative to email/password: the account's session token, `<userID>-<token>`. Get it once in game with `show_json(parent.user_id + "-" + parent.user_auth)`; it stays valid until you log out everywhere |
 | `REVOKED_REPORTERS` | (unset) | Comma-separated characters whose reports are rejected and whose past reports are ignored |
 | `RATE_LIMIT_PER_MINUTE` | `120` | Per-IP request budget for `/api` (0 disables) |
 | `TRUST_PROXY` | `false` | How to find the client IP for rate limiting: `cloudflare` (behind Cloudflare or a Cloudflare Tunnel: uses `CF-Connecting-IP`), `true` (other reverse proxies: the last `X-Forwarded-For` entry), `false` (exposed directly). Behind a proxy, leaving it `false` makes every visitor share one limit |
