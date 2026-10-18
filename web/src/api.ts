@@ -149,7 +149,28 @@ export interface ItemDetail {
   velocity: Velocity[];
   listings: Listing[];
   sales: Sale[];
+  upgrades: UpgradeCosts | null;
   trackingSince: number | null;
+}
+
+export interface UpgradeStep {
+  level: number;
+  chance: number;
+  scroll: string;
+  scrollPrice: number | null;
+  fromBase: number | null;
+  baseCopies: number;
+  market: number | null;
+  cheapest: number | null;
+  buyAt: number | null;
+}
+
+export interface UpgradeCosts {
+  item: string;
+  kind: "upgrade" | "compound";
+  region: string;
+  base: { market: number | null; shop: number | null; price: number | null };
+  steps: UpgradeStep[];
 }
 
 export interface Movers {

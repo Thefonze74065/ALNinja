@@ -503,3 +503,7 @@ pre {
 .steps pre {
   margin: 6px 0;
 }
+
+tr.selected td {
+  background: var(--accent-bg);
+}

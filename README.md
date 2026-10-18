@@ -171,8 +171,9 @@ npm run rebuild          # replay data/raw into a fresh database (see above)
 ## API
 
 Scripts and bots should use the versioned public API. It's documented in the app at `/#/api`, and
-`GET /api/v1` lists the endpoints. All endpoints are `GET`, return JSON, allow any origin (CORS), take
-`?region=ALL|US|EU|ASIA`, are cached for 60 seconds and are rate-limited per IP.
+`GET /api/v1` lists the endpoints. Reads are `GET`, return JSON, allow any origin (CORS), take
+`?region=ALL|US|EU|ASIA`, are cached for 60 seconds and are rate-limited per IP. Reporting
+(`POST /api/v1/observations`) and corrections (`POST /api/v1/corrections`) need a reporting key.
 
 - `GET /api/v1/prices?items=a,b&min_sellers=3`: current prices
 - `GET /api/v1/prices/:item`: every level/variant of one item
@@ -181,6 +182,8 @@ Scripts and bots should use the versioned public API. It's documented in the app
 - `GET /api/v1/sales?item=&hours=24`: recent estimated sales
 - `GET /api/v1/movers?window=24h|7d`: biggest risers/fallers and most traded
 - `GET /api/v1/deals?kind=npc,flip,underpriced`: listings worth buying now
+- `GET /api/v1/upgrades/:item`: expected cost of each upgrade/compound level, from +0 and by the
+  cheapest route (buy a lower level and upgrade), at the game's base success chances
 - `GET /api/v1/archive`: daily CSV files (all hourly prices, all sales) for bulk analysis
 
 v1 shapes are stable: fields may be added, but not renamed or removed. The unversioned `/api/*`

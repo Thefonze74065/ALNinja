@@ -4,6 +4,7 @@ import { config } from "./config.ts";
 import { db } from "./db.ts";
 import { getGameMeta } from "./gamedata.ts";
 import { DAY, dealOptions, deals, history, movers, openListings, recentSales, regionParam, snapshot, velocity } from "./market.ts";
+import { upgradeCosts } from "./upgrades.ts";
 
 const stmts = {
   lastPoll: db.prepare("SELECT * FROM polls ORDER BY id DESC LIMIT 1"),
@@ -60,6 +61,7 @@ api.get("/items/:item", (c) => {
     velocity: velocity(item, region, days),
     listings: openListings(item, region),
     sales: recentSales(item, region, Date.now() - days * DAY, 200),
+    upgrades: upgradeCosts(item, region),
     trackingSince: (stmts.counts.get() as { tracking_since: number | null }).tracking_since,
   });
 });

@@ -6,6 +6,7 @@ import { archiveFile, listArchive } from "./archive.ts";
 import { config } from "./config.ts";
 import { addCorrection, correctionProblem, recentCorrections, type Correction } from "./corrections.ts";
 import { isRevoked, KEY_SUBJECT, keyOwner, keyStatus } from "./keys.ts";
+import { upgradeCosts } from "./upgrades.ts";
 import { accuracy, recordReport, validateReport, type ObservationReport } from "./observed.ts";
 import { dealOptions, deals, HOUR, history, lastPoll, movers, openListings, recentSales, regionParam, snapshot, type MarketRow } from "./market.ts";
 
@@ -40,6 +41,8 @@ v1.get("/", (c) =>
       "GET /api/v1/prices/:item": "Current price of each level/variant of one item. ?region=",
       "GET /api/v1/history/:item": "Hourly price history. ?region= &days=7 (max 365) &level= &variant=",
       "GET /api/v1/listings/:item": "Open merchant listings with location. ?region= &side=sell|buy",
+      "GET /api/v1/upgrades/:item":
+        "Expected cost of each upgrade/compound level, from +0 and by the cheapest route (buy lower, upgrade up). ?region=",
       "GET /api/v1/sales": "Recent estimated sales. ?region= &item= &hours=24 (max 720) &limit=500 (max 2000)",
       "GET /api/v1/movers": "Biggest price changes and most traded. ?region= &window=24h|7d &min_sellers=3 &limit=20",
       "GET /api/v1/accuracy": "How inferred sales compare with trades players' characters saw. ?days=7 (max 90)",
@@ -94,6 +97,11 @@ v1.get("/listings/:item", (c) => {
   const side = c.req.query("side");
   const listings = openListings(item, region).filter((l) => !side || l.side === side);
   return c.json({ region, item, listings });
+});
+
+v1.get("/upgrades/:item", (c) => {
+  const costs = upgradeCosts(c.req.param("item"), regionParam(c.req.query("region")));
+  return costs ? c.json(costs) : c.json({ error: "Not an upgradeable or compoundable item" }, 404);
 });
 
 v1.get("/sales", (c) => {

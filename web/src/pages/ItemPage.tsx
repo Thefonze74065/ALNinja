@@ -3,6 +3,7 @@ import { api, type GameMeta, type ItemDetail, type Variant } from "../api";
 import { itemHref } from "../components/ItemCell";
 import { ItemIcon } from "../components/ItemIcon";
 import { TimeChart, type Series } from "../components/TimeChart";
+import { UpgradeCostTable } from "../components/UpgradeCostTable";
 import { ago, duration, gold, percent, perDay, variantLabel } from "../format";
 import { Change } from "./Overview";
 
@@ -317,6 +318,10 @@ export function ItemPage({
             />
           </div>
         </>
+      )}
+
+      {detail?.upgrades && detail.upgrades.steps.length > 0 && (
+        <UpgradeCostTable costs={detail.upgrades} meta={meta} selectedLevel={selected?.variant ? null : selected?.level ?? null} />
       )}
 
       {detail && (

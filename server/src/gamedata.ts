@@ -27,6 +27,11 @@ export interface GameMeta {
   buyToSell?: number;
   /** Base values of scroll0-2 and cscroll0-2, used when valuing upgraded items. */
   scrolls?: Record<string, number>;
+  /**
+   * Base success chances (G.upgrades / G.compounds): [item grade][new level], indexed from level 1 at
+   * index 1. Grade is the item's own grade (calculate_item_grade at +0), as the server uses it.
+   */
+  odds?: { upgrade: number[][]; compound: number[][] };
 }
 
 const CATEGORY_BY_TYPE: Record<string, string> = {
@@ -86,7 +91,12 @@ function build(G: any): GameMeta {
 
   const scrolls: Record<string, number> = {};
   for (const s of ["scroll0", "scroll1", "scroll2", "cscroll0", "cscroll1", "cscroll2"]) scrolls[s] = G.items?.[s]?.g ?? 0;
-  return { version: G.version ?? null, items, buyToSell: G.multipliers?.buy_to_sell ?? 0.6, scrolls };
+  const table = (t: any) =>
+    [0, 1, 2].map((g) => Array.from({ length: 13 }, (_, level) => Number(t?.[g]?.[level]) || 0));
+  return {
+    version: G.version ?? null, items, buyToSell: G.multipliers?.buy_to_sell ?? 0.6, scrolls,
+    odds: { upgrade: table(G.upgrades), compound: table(G.compounds) },
+  };
 }
 
 /** Gold an NPC shop charges for one unit, or null if no shop sells it. Shops only sell plain +0 items. */
