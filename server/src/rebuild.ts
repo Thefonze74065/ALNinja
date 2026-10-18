@@ -82,6 +82,19 @@ const { refreshGameData } = await import("./gamedata.ts");
 // Sale detection uses NPC shop prices, so load the same game data the live server uses.
 await refreshGameData();
 
+// Observed sales, coverage and reporting keys come from players, not the raw archive: carry them over first,
+// since what reporters saw decides pending sales during the replay.
+if (fs.existsSync(liveDb)) {
+  db.exec(`ATTACH DATABASE '${liveDb.replaceAll("'", "''")}' AS old`);
+  for (const table of ["observed_sales", "observer_coverage", "reporter_keys"]) {
+    if (!db.prepare("SELECT 1 FROM old.sqlite_master WHERE type = 'table' AND name = ?").get(table)) continue;
+    // Copy the columns both versions have (an older database may lack newer columns).
+    const cols = (name: string) => (db.prepare(`PRAGMA ${name}.table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    const shared = cols("old").filter((c) => cols("main").includes(c)).join(", ");
+    db.exec(`INSERT INTO main.${table} (${shared}) SELECT ${shared} FROM old.${table}`);
+  }
+  db.exec("DETACH DATABASE old");
+}
 console.log(`[rebuild] replaying ${snapshots.length} snapshots from ${new Date(snapshots[0].at).toISOString()}`);
 const started = performance.now();
 // Prices only need computing on each hour's last snapshot: that's the one that sets the hour's
@@ -112,18 +125,6 @@ for (const [i, s] of snapshots.entries()) {
     const pct = Math.round(((i + 1) / snapshots.length) * 100);
     console.log(`[rebuild] ${i + 1}/${snapshots.length} snapshots (${pct}%)`);
   }
-}
-// Observed sales, coverage and reporting keys come from players, not the raw archive: carry them over.
-if (fs.existsSync(liveDb)) {
-  db.exec(`ATTACH DATABASE '${liveDb.replaceAll("'", "''")}' AS old`);
-  for (const table of ["observed_sales", "observer_coverage", "reporter_keys"]) {
-    if (!db.prepare("SELECT 1 FROM old.sqlite_master WHERE type = 'table' AND name = ?").get(table)) continue;
-    // Copy the columns both versions have (an older database may lack newer columns).
-    const cols = (name: string) => (db.prepare(`PRAGMA ${name}.table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
-    const shared = cols("old").filter((c) => cols("main").includes(c)).join(", ");
-    db.exec(`INSERT INTO main.${table} (${shared}) SELECT ${shared} FROM old.${table}`);
-  }
-  db.exec("DETACH DATABASE old");
 }
 const archived = maintain(Date.now(), true);
 db.exec("PRAGMA wal_checkpoint(TRUNCATE)");

@@ -5,6 +5,7 @@ import { fetchMerchants, type Merchant, type MerchantSlot } from "./aldata.ts";
 import { config } from "./config.ts";
 import { db, transaction } from "./db.ts";
 import { capAtShop, npcShopPrice } from "./gamedata.ts";
+import { isRevoked } from "./keys.ts";
 
 const HOUR = 3_600_000;
 
@@ -26,6 +27,7 @@ interface OpenListing extends Offer {
 }
 
 interface PendingListing extends OpenListing {
+  last_seen: number;
   closed_at: number;
   server_region: string | null;
 }
@@ -80,8 +82,14 @@ const stmts = {
     SELECT id, slot, side, item, level, variant, price, quantity, flags, first_seen, closed_at, server_region
     FROM listings WHERE merchant = ? AND close_reason = 'pending' AND closed_at >= ? ORDER BY closed_at DESC`),
   duePending: db.prepare(`
-    SELECT id, merchant, slot, side, item, level, variant, price, quantity, flags, first_seen, closed_at, server_region
+    SELECT id, merchant, slot, side, item, level, variant, price, quantity, flags, first_seen, last_seen, closed_at,
+      server_region
     FROM listings WHERE close_reason = 'pending' AND closed_at < ? ORDER BY closed_at, id`),
+  // Reporters whose characters had the merchant's stand in view for a whole stretch (see witnessed).
+  watchers: db.prepare("SELECT reporter FROM observer_coverage WHERE merchant = ? AND start <= ? AND end >= ?"),
+  observedTrades: db.prepare(`
+    SELECT quantity, reporter, key_owner FROM observed_sales WHERE merchant = ? AND side = ? AND item = ? AND level = ?
+      AND variant = ? AND price = ? AND at BETWEEN ? AND ?`),
   setReason: db.prepare("UPDATE listings SET close_reason = ? WHERE id = ?"),
   insertSale: db.prepare(`
     INSERT INTO sales (listing_id, merchant, side, item, level, variant, region, price, quantity, listed_at, at)
@@ -277,11 +285,33 @@ function archive(raw: string, at: Date) {
   fs.writeFileSync(path.join(dir, `${iso.slice(11, 19).replaceAll(":", "-")}.json.gz`), zlib.gzipSync(raw));
 }
 
-/** Vanished listings that weren't put back within SALE_CONFIRM_MS are sales, dated when they vanished. */
+/** Reports can be a little behind or ahead of ALData's view of the stand. */
+const REPORT_SLACK_MS = 2 * 60_000;
+
+/**
+ * Units of a vanished listing that reporters saw trade, or null if no reporter watched the stand for
+ * the whole stretch in which it could have sold (from when it was last seen listed until it vanished).
+ */
+function witnessed(l: PendingListing & { merchant: string }): number | null {
+  const watched = (stmts.watchers.all(l.merchant, l.last_seen, l.closed_at - REPORT_SLACK_MS) as { reporter: string }[])
+    .some((w) => !isRevoked(w.reporter));
+  if (!watched) return null;
+  const trades = stmts.observedTrades.all(l.merchant, l.side, l.item, l.level, l.variant, l.price,
+    l.last_seen - REPORT_SLACK_MS, l.closed_at + REPORT_SLACK_MS) as { quantity: number; reporter: string; key_owner: string }[];
+  return trades.filter((t) => !isRevoked(t.reporter) && !isRevoked(t.key_owner)).reduce((a, t) => a + t.quantity, 0);
+}
+
+/**
+ * Vanished listings that weren't put back within SALE_CONFIRM_MS are sales, dated when they vanished.
+ * If a reporter was watching the stand, what they saw trade decides instead: "unsold" when nothing did.
+ */
 function confirmPendingSales(at: number, stats: Stats) {
   for (const l of stmts.duePending.all(at - SALE_CONFIRM_MS) as unknown as (PendingListing & { merchant: string })[]) {
-    stmts.setReason.run("gone", l.id);
-    stmts.insertSale.run(l.id, l.merchant, l.side, l.item, l.level, l.variant, l.server_region, l.price, l.quantity,
+    const seen = witnessed(l);
+    const units = seen == null ? l.quantity : Math.min(seen, l.quantity);
+    stmts.setReason.run(units ? "gone" : "unsold", l.id);
+    if (!units) continue;
+    stmts.insertSale.run(l.id, l.merchant, l.side, l.item, l.level, l.variant, l.server_region, l.price, units,
       l.first_seen, l.closed_at);
     stats.sales++;
   }

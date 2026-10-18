@@ -28,7 +28,10 @@ history, so ALNinja keeps its own:
    listing only counts once it has stayed gone for 2 hours: merchants often take stock down and put it
    back (restocking, repricing), and if the same goods return it was a withdrawal or reprice (a smaller
    returning stack counts the difference as sold). Lower-level copies that vanish as the same item appears
-   at a higher level were consumed upgrading or compounding (`upgraded`), not sold. Sales are dated
+   at a higher level were consumed upgrading or compounding (`upgraded`), not sold. If a
+   [reporter](#reporting-trades) was watching the stand the whole time the listing could have sold (a
+   character with the stand in view, or the merchant itself sending its trade history), what it saw
+   decides: with no witnessed trade the listing is `unsold`, not a sale. Sales are dated
    when the listing vanished. Sales feed
    sold-per-day figures, the most-traded list, and each item's time-to-sell by price band.
 4. **Witnessed trades (optional)**: stand snapshots can't tell a sale from a take-down, but the game shows

@@ -81,6 +81,10 @@ const stmts = {
   inferredSince: db.prepare(`
     SELECT s.*, l.close_reason FROM sales s JOIN listings l ON l.id = s.listing_id WHERE s.at >= ? ORDER BY s.at`),
   coverageSince: db.prepare("SELECT * FROM observer_coverage WHERE end >= ?"),
+  // Listings that would have been estimated as sold, but a reporter watched and saw no trade.
+  unsoldSince: db.prepare(`
+    SELECT merchant, side, item, level, variant, price, quantity, first_seen AS listed_at, closed_at AS at
+    FROM listings WHERE close_reason = 'unsold' AND closed_at >= ? ORDER BY closed_at`),
   listingNear: db.prepare(`
     SELECT close_reason, closed_at FROM listings WHERE merchant = ? AND item = ? AND level = ? AND variant = ? AND side = ?
       AND price = ? AND first_seen <= ? ORDER BY first_seen DESC LIMIT 1`),
@@ -209,7 +213,10 @@ export function recordReport(r: ObservationReport, receivedAt: number, keyOwner 
         Math.round(s.at + skew));
     }
     const seenAt = Math.round(r.sentAt + skew);
-    for (const merchant of new Set(r.inView ?? [])) {
+    // A reporter sending its trade history sees every trade at its own stand, wherever it stands.
+    const watching = new Set(r.inView ?? []);
+    if (r.history !== undefined) watching.add(r.reporter);
+    for (const merchant of watching) {
       const open = stmts.openCoverage.get(r.reporter, merchant, seenAt - COVERAGE_GAP_MS) as { id: number } | undefined;
       if (open) stmts.extendCoverage.run(seenAt, open.id);
       else stmts.insertCoverage.run(r.reporter, merchant, seenAt, seenAt);
@@ -302,7 +309,9 @@ export function accuracy(days: number) {
   const caughtUnits = tracked.reduce((a, o) => a + (matchedUnits.get(o.id) ?? 0), 0);
 
   const checkable = inferred.filter((s) => s.at >= since && covered(coverage, s.merchant, s.at));
-  const checkableUnits = checkable.reduce((a, s) => a + s.quantity, 0);
+  // Watched estimates that reporters refuted never became sales, but they count against the estimator.
+  const unsold = stmts.unsoldSince.all(since) as unknown as Omit<Inferred, "id" | "listing_id" | "region">[];
+  const checkableUnits = [...checkable, ...unsold].reduce((a, s) => a + s.quantity, 0);
   const confirmedUnits = checkable.reduce((a, s) => a + (usedUnits.get(s.id) ?? 0), 0);
 
   const names = getGameMeta().items;
@@ -311,11 +320,15 @@ export function accuracy(days: number) {
     .map((o) => ({ ...o, name: names[o.item]?.name ?? o.item, reason: missReason(o) }));
   const reasons: Record<string, number> = {};
   for (const m of missed) reasons[m.reason] = (reasons[m.reason] ?? 0) + 1;
-  const falsePositives = checkable
-    .filter((s) => (usedUnits.get(s.id) ?? 0) < s.quantity)
+  const falsePositives = [
+    ...checkable.filter((s) => (usedUnits.get(s.id) ?? 0) < s.quantity)
+      .map((s) => ({ ...s, unconfirmed: s.quantity - (usedUnits.get(s.id) ?? 0) })),
+    ...unsold.map((s) => ({ ...s, unconfirmed: s.quantity })),
+  ]
+    .sort((a, b) => a.at - b.at)
     .map((s) => ({
       merchant: s.merchant, side: s.side, item: s.item, name: names[s.item]?.name ?? s.item, level: s.level,
-      variant: s.variant, price: s.price, quantity: s.quantity, unconfirmed: s.quantity - (usedUnits.get(s.id) ?? 0),
+      variant: s.variant, price: s.price, quantity: s.quantity, unconfirmed: s.unconfirmed,
       listedAt: s.listed_at, at: s.at,
     }));
 

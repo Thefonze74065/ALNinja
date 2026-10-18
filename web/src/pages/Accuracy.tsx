@@ -138,7 +138,8 @@ export function Accuracy({ meta }: { meta: GameMeta | null }) {
             <h2>Unconfirmed: estimated while watched, not seen in game</h2>
             <p className="muted small">
               Estimated sales at a merchant a reporter had in view, with no matching trade witnessed: likely
-              withdrawals or other false positives in the estimation rules.
+              withdrawals or other false positives in the estimation rules. When a reporter watched the whole time
+              a listing could have sold, it's kept off the site's sales entirely.
             </p>
             {data.falsePositives.length === 0 ? (
               <p className="muted">None.</p>

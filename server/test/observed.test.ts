@@ -127,3 +127,43 @@ describe("accuracy", () => {
     assert.deepEqual(acc2.map((s) => [s.source, s.quantity]), [["estimated", 1]]);
   });
 });
+
+describe("watched stands", () => {
+  // Listed at tA, vanished at tB, confirmation due by tC. Each merchant reports its own trade history.
+  const tA = now - 5 * HOUR;
+  const tB = tA + HOUR;
+  const tC = tB + 3 * HOUR;
+  const keep = { trade1: { name: "t_keep_w", price: 1 } };
+  const stands = (t: number, up: boolean) => [
+    merchant("OwnPulled", t, { ...keep, ...(up ? { trade2: { name: "t_own", price: 100 } } : {}) }),
+    merchant("OwnSold", t, { ...keep, ...(up ? { trade2: { name: "t_own", price: 100 } } : {}) }),
+    merchant("Unwatched", t, { ...keep, ...(up ? { trade2: { name: "t_own", price: 100 } } : {}) }),
+  ];
+  const listing = (m: string) =>
+    db.prepare("SELECT close_reason FROM listings WHERE merchant = ? AND item = 't_own'").get(m) as any;
+  const salesAt = (m: string) => db.prepare("SELECT quantity FROM sales WHERE merchant = ?").all(m) as any[];
+
+  test("a stand watched the whole time with no trade seen is unsold, not a sale", () => {
+    ingest(stands(tA, true), tA);
+    for (let t = tA - MINUTE; t <= tB + 5 * MINUTE; t += MINUTE) {
+      for (const reporter of ["OwnPulled", "OwnSold"]) {
+        const history = reporter === "OwnSold" && t === tB - 10 * MINUTE
+          ? [{ at: t, event: "sell" as const, counterparty: "Buyer", item: { name: "t_own" }, total: 100 }]
+          : [];
+        recordReport({ reporter, sentAt: t, history }, t);
+      }
+    }
+    ingest(stands(tB, false), tB);
+    ingest(stands(tC, false), tC);
+    assert.equal(listing("OwnPulled").close_reason, "unsold");
+    assert.equal(salesAt("OwnPulled").length, 0);
+    assert.equal(listing("OwnSold").close_reason, "gone");
+    assert.deepEqual(salesAt("OwnSold").map((s) => s.quantity), [1]);
+    assert.equal(listing("Unwatched").close_reason, "gone", "nobody watching: still an estimated sale");
+  });
+
+  test("refuted estimates count against precision", () => {
+    const fp = accuracy(1).falsePositives.filter((f) => f.item === "t_own");
+    assert.deepEqual(fp.map((f) => [f.merchant, f.unconfirmed]), [["OwnPulled", 1]]);
+  });
+});
