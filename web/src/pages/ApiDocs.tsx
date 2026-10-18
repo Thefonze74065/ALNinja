@@ -46,7 +46,7 @@ const ENDPOINTS = [
   {
     path: "/api/v1/value/:item",
     params: "region, level=0, variant, exclude=YourMerchant",
-    desc: "A suggested price to sell one at: the cheapest other seller (capped at the cost to make), else recent sales, the last asking price, the cost to make, or what an NPC pays; never under the best bid. `basis` says which, and every input is included.",
+    desc: "A suggested price to sell one at: the cheapest other seller (capped at the cost to make, and at what it sold for this week), else what it has sold for (median of the latest 10 sales, up to a year back), the last asking price, the cost to make, or what an NPC pays; never under the best bid. `basis` says which, and every input is included.",
     example: "/api/v1/value/throwingstars?level=8",
   },
   {

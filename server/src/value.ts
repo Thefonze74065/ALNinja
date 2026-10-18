@@ -1,15 +1,20 @@
 // A suggested price for selling one item at a given level: what a bot or console should list it at.
 // Uses the best evidence there is, in order: other merchants' current asks (capped at the cost to
-// make), recent sales, the last known asking price, the expected cost to make it (upgraded or
-// compounded items), and what an NPC pays.
+// make, and at what it has sold for this week, since asks above that aren't selling), what it has
+// sold for (its latest sales, however old), the last known asking price, the expected cost to make
+// it (upgraded or compounded items), and what an NPC pays.
 // Never below what an NPC or the best buy order pays, since selling there is always an option.
 import { config } from "./config.ts";
 import { npcSellValue } from "./gamedata.ts";
 import { DAY, HOUR, history, openListings, recentSales, snapshot } from "./market.ts";
 import { upgradeCosts } from "./upgrades.ts";
 
-/** How far back sales and prices count as evidence. */
-const LOOKBACK_DAYS = 30;
+/** How far back sales and prices count as evidence; the newest evidence wins. */
+const LOOKBACK_DAYS = 365;
+/** The suggestion from sales is the median of at most this many of the latest. */
+const SALES_SAMPLE = 10;
+/** Sales this recent outrank current asks that are higher (those asks aren't what it sells for). */
+const FRESH_SALES_MS = 7 * DAY;
 
 export type ValueBasis = "asks" | "sales" | "history" | "cost_to_make" | "bid" | "npc";
 
@@ -35,10 +40,14 @@ export function suggestedValue(item: string, level: number, variant: string, reg
   const bestBid = bids.length ? Math.max(...bids) : null;
   const npc = npcSellValue(item, level);
 
-  const sold = recentSales(item, region, now - LOOKBACK_DAYS * DAY, 2000)
-    .filter((s) => s.side === "sell" && s.level === level && s.variant === variant);
+  const sold = recentSales(item, region, now - LOOKBACK_DAYS * DAY, 5000)
+    .filter((s) => s.side === "sell" && s.level === level && s.variant === variant)
+    .slice(0, SALES_SAMPLE); // newest first
   const sales = sold.length
-    ? { count: sold.length, median: median(sold.map((s) => s.price)), last: sold[0].price, lastAt: sold[0].at }
+    ? {
+        count: sold.length, median: median(sold.map((s) => s.price))!, last: sold[0].price, lastAt: sold[0].at,
+        oldestAt: sold[sold.length - 1].at,
+      }
     : null;
 
   const points = history(item, region, LOOKBACK_DAYS)
@@ -53,10 +62,12 @@ export function suggestedValue(item: string, level: number, variant: string, reg
   let basis: ValueBasis = "npc";
   let suggested: number = npc;
   // Nobody pays another seller more than it costs to make one (an estimate that already leans high).
-  if (asks) [basis, suggested] = costToMake && costToMake.expected < asks.lowest
-    ? ["cost_to_make", costToMake.expected]
-    : ["asks", asks.lowest];
-  else if (sales?.median != null) [basis, suggested] = ["sales", sales.median];
+  if (asks) {
+    [basis, suggested] = costToMake && costToMake.expected < asks.lowest
+      ? ["cost_to_make", costToMake.expected]
+      : ["asks", asks.lowest];
+    if (sales && sales.lastAt >= now - FRESH_SALES_MS && sales.median < suggested) [basis, suggested] = ["sales", sales.median];
+  } else if (sales) [basis, suggested] = ["sales", sales.median];
   else if (lastPrice) [basis, suggested] = ["history", lastPrice.price];
   else if (costToMake) [basis, suggested] = ["cost_to_make", costToMake.expected];
   const floor = Math.max(npc, bestBid ?? 0);
