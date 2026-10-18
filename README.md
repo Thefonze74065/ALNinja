@@ -34,7 +34,12 @@ history, so ALNinja keeps its own:
 4. **Witnessed trades (optional)**: stand snapshots can't tell a sale from a take-down, but the game shows
    every stand trade (the "+$$" event: seller, buyer, item, price, quantity) to characters that can see the
    merchant. Characters running the snippet on the API page report those, plus which merchants they have in
-   view, to `POST /api/v1/observations` (authorized by `REPORT_TOKEN`). Witnessed trades show as **Seen**
+   view, and their own trades from the game's trade history, to `POST /api/v1/observations`. Anyone can
+   report: like ALData, a player mails `KEY_MAIL_CHARACTER` in game with subject `alninja_auth` and a key
+   they choose (the 48,000 gold mail fee deters spam); ALNinja reads that account's mail every minute,
+   stores a hash of the key, and accepts `Authorization: Bearer <Character>:<key>`. A report only counts
+   if it matches a listing ALNinja saw at that merchant (same goods and price, at that time), so made-up
+   trades are set aside; abusive reporters can be revoked. Witnessed trades show as **Seen**
    with the buyer; the **Sales accuracy** page (`/#/accuracy`, `GET /api/v1/accuracy`) compares the
    estimates against them (recall, precision, and why trades were missed or invented), which is how the
    estimation rules get tuned. Observations are kept across rebuilds and exported daily to
@@ -94,7 +99,11 @@ The included compose file sets `user: "568:568"`, TrueNAS SCALE's `apps` user, f
 | `REBUILD` | (unset) | Rebuild from the raw archive on startup, once per distinct value |
 | `RESET_DATA` | (unset) | **Deletes all collected history** (database, CSV archive, raw snapshots, backups) on startup and starts fresh, once per distinct value |
 | `HOURLY_RETENTION_DAYS` | `90` | Hourly price rows kept in the database (min 8); older ones live in the CSV archive |
-| `REPORT_TOKEN` | (unset) | Secret that lets characters report witnessed trades (`POST /api/v1/observations`); unset disables reporting. Use a long random string |
+| `REPORT_TOKEN` | (unset) | Admin reporting key (`Authorization: Bearer <token>`) for your own characters; works without the key mail setup |
+| `KEY_MAIL_CHARACTER` | (unset) | Character players mail (subject `alninja_auth`, key as message) to get a public reporting key. Enables public reporting |
+| `AL_EMAIL` / `AL_PASSWORD` | (unset) | Login for the Adventure Land account that owns `KEY_MAIL_CHARACTER`, used only to read and delete key mail. Use a dedicated account |
+| `AL_AUTH` | (unset) | Alternative to email/password: that account's `auth` cookie from adventure.land (`<userID>-<token>`) |
+| `REVOKED_REPORTERS` | (unset) | Comma-separated characters whose reports are rejected and whose past reports are ignored |
 | `RATE_LIMIT_PER_MINUTE` | `120` | Per-IP request budget for `/api` (0 disables) |
 | `TRUST_PROXY` | `false` | How to find the client IP for rate limiting: `cloudflare` (behind Cloudflare or a Cloudflare Tunnel: uses `CF-Connecting-IP`), `true` (other reverse proxies: the last `X-Forwarded-For` entry), `false` (exposed directly). Behind a proxy, leaving it `false` makes every visitor share one limit |
 | `ALDATA_URL` | `https://aldata.earthiverse.ca` | |
@@ -174,8 +183,10 @@ set `TRUST_PROXY` (`cloudflare` for Cloudflare). Node bots can call it over plai
 
 ## Security
 
-The site has no accounts. The only write endpoint is trade reporting, which is disabled unless
-`REPORT_TOKEN` is set, checks the token in constant time, validates every field and caps request size. All SQL is parameterized, archive downloads are
+The site has no accounts. The only write endpoint is trade reporting: keys are checked in constant
+time and stored hashed, reports are validated field by field, size-capped and rate-limited per key, and
+only count when they match a listing ALNinja saw. The key-mail account's credentials are used solely to
+read and delete `alninja_auth` mail; other mail, and any mail carrying an item, is never touched. All SQL is parameterized, archive downloads are
 validated against the archive directory, and player-supplied text is escaped by React (and neutralized
 against spreadsheet formulas in the CSV exports). Responses carry a strict Content-Security-Policy, plus
 anti-framing, `nosniff`, HSTS and referrer headers. The API is rate-limited per client IP: set

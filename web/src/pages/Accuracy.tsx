@@ -70,6 +70,7 @@ export function Accuracy({ meta }: { meta: GameMeta | null }) {
               <div className="stat-value">{data.observed.trades}</div>
               <div className="stat-sub muted">
                 {data.observed.units} units{data.observed.untracked ? `, ${data.observed.untracked} at untracked merchants` : ""}
+                {data.observed.unverified ? ` · ${data.observed.unverified} unverified reports set aside` : ""}
               </div>
             </div>
             <div className="stat">

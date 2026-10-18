@@ -493,3 +493,13 @@ pre {
     text-align: left;
   }
 }
+
+.steps {
+  padding-left: 20px;
+}
+.steps li {
+  margin-bottom: 8px;
+}
+.steps pre {
+  margin: 6px 0;
+}

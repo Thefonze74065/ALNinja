@@ -113,13 +113,15 @@ for (const [i, s] of snapshots.entries()) {
     console.log(`[rebuild] ${i + 1}/${snapshots.length} snapshots (${pct}%)`);
   }
 }
-// Observed sales and coverage come from players' characters, not the raw archive: carry them over.
+// Observed sales, coverage and reporting keys come from players, not the raw archive: carry them over.
 if (fs.existsSync(liveDb)) {
   db.exec(`ATTACH DATABASE '${liveDb.replaceAll("'", "''")}' AS old`);
-  for (const table of ["observed_sales", "observer_coverage"]) {
-    if (db.prepare("SELECT 1 FROM old.sqlite_master WHERE type = 'table' AND name = ?").get(table)) {
-      db.exec(`INSERT INTO main.${table} SELECT * FROM old.${table}`);
-    }
+  for (const table of ["observed_sales", "observer_coverage", "reporter_keys"]) {
+    if (!db.prepare("SELECT 1 FROM old.sqlite_master WHERE type = 'table' AND name = ?").get(table)) continue;
+    // Copy the columns both versions have (an older database may lack newer columns).
+    const cols = (name: string) => (db.prepare(`PRAGMA ${name}.table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    const shared = cols("old").filter((c) => cols("main").includes(c)).join(", ");
+    db.exec(`INSERT INTO main.${table} (${shared}) SELECT ${shared} FROM old.${table}`);
   }
   db.exec("DETACH DATABASE old");
 }

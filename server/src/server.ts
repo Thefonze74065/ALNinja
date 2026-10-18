@@ -10,6 +10,7 @@ import { poll } from "./collector.ts";
 import { config } from "./config.ts";
 import { db } from "./db.ts";
 import { refreshGameData } from "./gamedata.ts";
+import { startKeyMailLoop } from "./mail.ts";
 import { rateLimit } from "./ratelimit.ts";
 import { v1 } from "./v1.ts";
 
@@ -32,6 +33,7 @@ async function pollLoop() {
 }
 pollLoop();
 setInterval(refreshGameData, 24 * 3_600_000);
+startKeyMailLoop();
 
 const app = new Hono();
 // Read-only public site: lock the page to its own scripts/styles, game sprites from adventure.land,

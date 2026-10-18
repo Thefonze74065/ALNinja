@@ -25,8 +25,13 @@ services:
       ARCHIVE_RAW: "true"
       # Behind Cloudflare (incl. a Cloudflare Tunnel) set this, or every visitor shares one rate limit.
       # TRUST_PROXY: cloudflare
-      # Lets characters report witnessed trades (snippet on the site's API page). Long random string.
+      # Reporting trades (snippet on the site's API page). REPORT_TOKEN is an admin key for your own
+      # characters; KEY_MAIL_CHARACTER + an account login let anyone get a key by in-game mail.
       # REPORT_TOKEN: "change-me"
+      # KEY_MAIL_CHARACTER: "YourMailCharacter"
+      # AL_EMAIL: "dedicated-account@example.com"
+      # AL_PASSWORD: "..."
+      # REVOKED_REPORTERS: ""
       # Set (or change) to replay the raw archive into a fresh database on the next start; see README.
       # REBUILD: "1"
       # Set (or change) to DELETE all collected history on the next start and begin fresh.

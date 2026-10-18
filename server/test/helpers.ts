@@ -9,6 +9,8 @@ process.env.ARCHIVE_RAW = "false";
 process.env.FRESH_HOURS = "48";
 process.env.HOURLY_RETENTION_DAYS = "8";
 process.env.REPORT_TOKEN = "test-token";
+process.env.KEY_MAIL_CHARACTER = "KeyBot";
+process.env.REVOKED_REPORTERS = "Revoked1";
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
@@ -21,6 +23,8 @@ export const app = {
   market: await import("../src/market.ts"),
   archive: await import("../src/archive.ts"),
   observed: await import("../src/observed.ts"),
+  keys: await import("../src/keys.ts"),
+  mail: await import("../src/mail.ts"),
   v1: (await import("../src/v1.ts")).v1,
 };
 export const { db } = app.db;

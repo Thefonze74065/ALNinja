@@ -63,6 +63,15 @@ describe("POST /observations", () => {
     assert.equal(rows("Dupe").length, 1);
   });
 
+  test("identical trades reported by the same character are separate trades", () => {
+    const r = recordReport({
+      reporter: "Char3", sentAt: now,
+      sales: [sale({ seller: "Twice", at: now }), sale({ seller: "Twice", at: now + 30_000 })],
+    }, now);
+    assert.equal(r.stored, 2);
+    assert.equal(rows("Twice").length, 2);
+  });
+
   test("merchants in view build coverage intervals; a long gap starts a new one", () => {
     for (const t of [0, 30_000, 60_000, 90_000, 10 * MINUTE]) {
       recordReport({ reporter: "Watcher", sentAt: now + t, inView: ["Watched"] }, now + t);
@@ -99,10 +108,12 @@ describe("accuracy", () => {
 
   test("recall, precision and miss reasons", () => {
     const a = accuracy(1);
-    // Untracked: observations of merchants ALData doesn't know (Ghost, plus earlier tests' test names).
-    const untracked = (db.prepare("SELECT COUNT(*) AS n FROM observed_sales WHERE merchant NOT IN (SELECT id FROM merchants)").get() as any).n;
-    assert.ok(untracked >= 1);
-    assert.equal(a.observed.untracked, untracked);
+    // Reports at merchants never seen offering those goods (Ghost, plus earlier tests' names) can't be
+    // verified against a listing, so they're set aside rather than counted.
+    const unseen = (db.prepare("SELECT COUNT(*) AS n FROM observed_sales WHERE merchant NOT IN (SELECT id FROM merchants)").get() as any).n;
+    assert.ok(unseen >= 1);
+    assert.equal(a.observed.unverified, unseen);
+    assert.equal(a.observed.untracked, 0);
     assert.equal(a.recall, 3 / 4);
     assert.equal(a.precision, 3 / 4);
     assert.deepEqual(a.missedReasons, { "still listed (change not seen)": 1 });

@@ -126,7 +126,7 @@ export interface Accuracy {
   days: number;
   reporters: number;
   merchantHoursObserved: number;
-  observed: { trades: number; units: number; untracked: number };
+  observed: { trades: number; units: number; untracked: number; unverified: number };
   recall: number | null;
   precision: number | null;
   checkable: { sales: number; units: number };

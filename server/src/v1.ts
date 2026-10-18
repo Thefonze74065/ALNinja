@@ -1,11 +1,11 @@
 // Public, versioned API for bots and other tools. Keep these shapes stable; add fields, don't rename.
-import { createHash, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { archiveFile, listArchive } from "./archive.ts";
 import { config } from "./config.ts";
-import { accuracy, recordReport, validateReport } from "./observed.ts";
+import { isRevoked, KEY_SUBJECT, keyOwner, keyStatus } from "./keys.ts";
+import { accuracy, recordReport, validateReport, type ObservationReport } from "./observed.ts";
 import { dealOptions, deals, HOUR, history, lastPoll, movers, openListings, recentSales, regionParam, snapshot, type MarketRow } from "./market.ts";
 
 const clamp = (raw: string | undefined, fallback: number, min: number, max: number) => {
@@ -42,7 +42,9 @@ v1.get("/", (c) =>
       "GET /api/v1/sales": "Recent estimated sales. ?region= &item= &hours=24 (max 720) &limit=500 (max 2000)",
       "GET /api/v1/movers": "Biggest price changes and most traded. ?region= &window=24h|7d &min_sellers=3 &limit=20",
       "GET /api/v1/accuracy": "How inferred sales compare with trades players' characters saw. ?days=7 (max 90)",
-      "POST /api/v1/observations": "Report trades your characters saw (needs the instance's REPORT_TOKEN); see /#/api",
+      "POST /api/v1/observations": "Report trades your characters saw or made (needs a reporting key); see /#/api",
+      "GET /api/v1/auth": "How to get a reporting key (in-game mail)",
+      "GET /api/v1/auth/:character": "Whether a character has a reporting key; with Authorization, whether it's valid",
       "GET /api/v1/archive": "Daily CSV files of every hourly price row and every sale, for bulk analysis",
       "GET /api/v1/deals":
         "Listings worth buying now. ?region= &kind=npc,underpriced,flip &min_discount=0.2 &min_sellers=3 &min_profit=1 &sort=profit|discount &limit=100 (max 500)",
@@ -139,16 +141,23 @@ v1.get("/archive/:kind/:file", (c) => {
   });
 });
 
-/** Constant-time check of "Authorization: Bearer <token>" against REPORT_TOKEN. */
-function authorized(header: string | undefined): boolean {
-  if (!config.reportToken || !header?.startsWith("Bearer ")) return false;
-  const digest = (v: string) => createHash("sha256").update(v).digest();
-  return timingSafeEqual(digest(header.slice(7).trim()), digest(config.reportToken));
+// Per-key report budget, on top of the per-IP limit: the snippet reports every 30s.
+const REPORTS_PER_MINUTE = 12;
+const keyWindows = new Map<string, { start: number; count: number }>();
+function overBudget(owner: string): boolean {
+  const now = Date.now();
+  let w = keyWindows.get(owner);
+  if (!w || now - w.start >= 60_000) keyWindows.set(owner, (w = { start: now, count: 0 }));
+  if (keyWindows.size > 10_000) keyWindows.clear();
+  return ++w.count > REPORTS_PER_MINUTE;
 }
 
 v1.post("/observations", bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json({ error: "Report too large" }, 413) }), async (c) => {
-  if (!config.reportToken) return c.json({ error: "Reporting is not enabled on this instance" }, 404);
-  if (!authorized(c.req.header("authorization"))) return c.json({ error: "Missing or wrong report token" }, 401);
+  const owner = keyOwner(c.req.header("authorization"));
+  if (!owner) {
+    return c.json({ error: "Missing or wrong reporting key (Authorization: Bearer <Character>:<key>). See GET /api/v1/auth" }, 401);
+  }
+  if (owner !== "admin" && overBudget(owner)) return c.json({ error: `At most ${REPORTS_PER_MINUTE} reports a minute per key` }, 429);
   let body: unknown;
   try {
     body = await c.req.json();
@@ -157,7 +166,30 @@ v1.post("/observations", bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json
   }
   const problem = validateReport(body);
   if (problem) return c.json({ error: problem }, 400);
-  return c.json(recordReport(body as Parameters<typeof recordReport>[0], Date.now()));
+  const report = body as ObservationReport;
+  if (isRevoked(report.reporter)) return c.json({ error: "This character's reports are not accepted" }, 403);
+  return c.json(recordReport(report, Date.now(), owner));
+});
+
+v1.get("/auth", (c) =>
+  c.json({
+    enabled: Boolean(config.keyMailCharacter),
+    mailTo: config.keyMailCharacter,
+    subject: KEY_SUBJECT,
+    message: "your key: 16-200 printable characters, no spaces or colons. Pick a long random one.",
+    howTo: config.keyMailCharacter
+      ? `In game, mail ${config.keyMailCharacter} with subject "${KEY_SUBJECT}" and your key as the message ` +
+        `(e.g. send_mail("${config.keyMailCharacter}", "${KEY_SUBJECT}", "<key>")). The mail fee is the game's ` +
+        "usual 48,000 gold. Keys are picked up within a minute; check GET /api/v1/auth/<YourCharacter>. " +
+        "Then send reports with Authorization: Bearer <YourCharacter>:<key>. Mail again to change your key."
+      : "Public reporting keys aren't enabled on this instance.",
+  }),
+);
+
+v1.get("/auth/:character", (c) => {
+  const status = keyStatus(c.req.param("character"));
+  const header = c.req.header("authorization");
+  return c.json(header ? { ...status, valid: keyOwner(header)?.toLowerCase() === status.character.toLowerCase() } : status);
 });
 
 v1.get("/accuracy", (c) => c.json(accuracy(clamp(c.req.query("days"), 7, 1, 90))));

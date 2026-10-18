@@ -78,12 +78,21 @@ interface ArchiveFile {
 }
 
 function Reporting({ base }: { base: string }) {
-  const snippet = `// ALNinja sale reporter: sends stand trades this character witnesses to ALNinja.
-// The game shows every stand trade ("+$$") to characters that can see the merchant.
-const ALNINJA_URL = "${base}";
-const ALNINJA_TOKEN = "paste the instance's REPORT_TOKEN here";
+  const [auth, setAuth] = useState<{ enabled: boolean; mailTo: string | null; subject: string } | null>(null);
+  useEffect(() => {
+    fetch("/api/v1/auth").then((r) => r.json()).then(setAuth, () => setAuth(null));
+  }, []);
+  const mailTo = auth?.mailTo ?? "<mail character>";
+  const subject = auth?.subject ?? "alninja_auth";
 
-const alninja = { sales: [] };
+  const snippet = `// ALNinja trade reporter. Reports stand trades this character witnesses ("+$$", shown to characters
+// that can see the merchant) and its own trades (the game's trade history), to make prices more accurate.
+const ALNINJA_URL = "${base}";
+const ALNINJA_KEY = "YourCharacter:your-key"; // the character that mailed the key, a colon, then the key
+
+const alninja = { sales: [], history: [], last: null };
+
+// Trades at stands this character can see.
 alninja.onUi = (data) => {
   if (data.type !== "+$$" || !data.item) return;
   alninja.sales.push({
@@ -94,29 +103,63 @@ alninja.onUi = (data) => {
 };
 parent.socket.on("ui", alninja.onUi);
 
+// This character's own trades, including at its own stand: report entries added since the last read.
+// The game merges a repeat of the last trade into it, so a grown last entry counts its extra units.
+alninja.newTrades = (prev, next) => {
+  const same = (a, b) => a[0] === b[0] && a[1] === b[1] && a[2].name === b[2].name && a[2].level === b[2].level;
+  for (let s = 0; s <= prev.length; s++) {
+    const p = prev.slice(s);
+    if (next.length < p.length) continue;
+    const last = p.length - 1;
+    if (!p.every((e, i) => same(e, next[i]) && (i === last || ((e[2].q || 1) === (next[i][2].q || 1) && e[3] === next[i][3])))) continue;
+    const out = [];
+    if (p.length) {
+      const grown = (next[last][2].q || 1) - (p[last][2].q || 1);
+      if (grown > 0) out.push([next[last][0], next[last][1], { ...next[last][2], q: grown }, next[last][3] - p[last][3]]);
+    }
+    return out.concat(next.slice(p.length));
+  }
+  return next;
+};
+alninja.onHistory = (list) => {
+  if (!Array.isArray(list)) return;
+  const prev = alninja.last;
+  alninja.last = list;
+  if (!prev) return; // the first read is the starting point, not new trades
+  for (const [event, counterparty, item, total] of alninja.newTrades(prev, list)) {
+    alninja.history.push({ at: Date.now(), event, counterparty, item, total });
+  }
+};
+parent.socket.on("trade_history", alninja.onHistory);
+
 alninja.flush = async () => {
+  parent.socket.emit("trade_history"); // the answer arrives via onHistory, sent with the next flush
   const sales = alninja.sales.splice(0, 500);
+  const history = alninja.history.splice(0, 100);
   const inView = Object.values(parent.entities).filter((e) => e.player && e.stand).map((e) => e.name);
   try {
     const res = await fetch(\`\${ALNINJA_URL}/api/v1/observations\`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: \`Bearer \${ALNINJA_TOKEN}\` },
+      headers: { "Content-Type": "application/json", Authorization: \`Bearer \${ALNINJA_KEY}\` },
       body: JSON.stringify({
         reporter: character.name, sentAt: Date.now(), region: server.region, server: server.id,
-        map: character.map, inView, sales,
+        map: character.map, inView, sales, history,
       }),
     });
     if (!res.ok) game_log(\`ALNinja: \${(await res.json()).error ?? res.status}\`);
   } catch (e) {
-    alninja.sales.unshift(...sales.slice(-500)); // offline: keep them for the next try
+    alninja.sales.unshift(...sales); // offline: keep them for the next try
+    alninja.history.unshift(...history);
   }
 };
 alninja.timer = setInterval(alninja.flush, 30_000);
+alninja.flush();
 
 // Stop cleanly when the code stops (keeping the game's own cleanup).
 const alninjaDestroy = on_destroy;
 on_destroy = () => {
   parent.socket.off("ui", alninja.onUi);
+  parent.socket.off("trade_history", alninja.onHistory);
   clearInterval(alninja.timer);
   alninja.flush();
   alninjaDestroy();
@@ -126,16 +169,33 @@ on_destroy = () => {
     <div className="panel">
       <h2>Report trades from your characters</h2>
       <p className="small">
-        Stand snapshots can't tell a sale from a merchant taking stock down, but the game itself shows every stand
-        trade (the floating "+$$") to characters that can see the merchant. Characters running this snippet report
-        those trades, and the merchants in view, to this instance: sales they witness show as{" "}
-        <span className="badge">Seen</span> with the buyer, and the <a href="#/accuracy">accuracy page</a> measures
-        the estimates against them. Characters parked in town see the most.
+        Stand snapshots can't tell a sale from a merchant taking stock down, but the game itself tells characters
+        about real trades: every stand trade they can see (the floating "+$$"), and their own trades. Anyone can
+        help: characters running the snippet below report those, sales they report show as{" "}
+        <span className="badge">Seen</span>, and the <a href="#/accuracy">accuracy page</a> measures the estimates
+        against them. Reports only count when they match a listing ALNinja saw, so made-up trades don't.
       </p>
-      <p className="small">
-        Reporting needs the instance's <code>REPORT_TOKEN</code> (set on the server; ask the instance owner), so only
-        trusted characters can submit. A character doesn't see trades at its own stand.
-      </p>
+      {auth?.enabled === false ? (
+        <p className="callout small">Public reporting keys aren't enabled on this instance.</p>
+      ) : (
+        <ol className="small steps">
+          <li>
+            Pick a key: a long random string (16+ characters, no spaces or colons). Treat it like a password.
+          </li>
+          <li>
+            In game, mail <strong>{mailTo}</strong> with subject <code>{subject}</code> and your key as the message,
+            from the mail window or with code:
+            <pre><code>{`send_mail("${mailTo}", "${subject}", "your-key")`}</code></pre>
+            It costs the game's usual 48,000 gold mail fee. Your key is picked up within a minute; check at{" "}
+            <code>/api/v1/auth/YourCharacter</code>. Mail again any time to change it.
+          </li>
+          <li>
+            Paste the snippet into your code with <code>ALNINJA_KEY</code> set to{" "}
+            <code>YourCharacter:your-key</code> (the character that sent the mail). One key works for all your
+            characters. Characters in town see the most trades.
+          </li>
+        </ol>
+      )}
       <pre><code>{snippet}</code></pre>
     </div>
   );

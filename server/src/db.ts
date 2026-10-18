@@ -174,6 +174,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS observer_coverage_reporter ON observer_coverage (reporter, merchant, end);
 `);
 
+// Public reporting keys, registered by in-game mail. Only a hash of each key is stored.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS reporter_keys (
+    character  TEXT PRIMARY KEY COLLATE NOCASE, -- the character that mailed the key
+    key_hash   TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+`);
+// v0.6 observed_sales had no key_owner: who vouched for each observation ('admin' for REPORT_TOKEN).
+if (!(db.prepare("PRAGMA table_info(observed_sales)").all() as { name: string }[]).some((c) => c.name === "key_owner")) {
+  db.exec("ALTER TABLE observed_sales ADD COLUMN key_owner TEXT NOT NULL DEFAULT 'admin'");
+}
+
 // v0.3 listings had no flags column.
 if (!(db.prepare("PRAGMA table_info(listings)").all() as { name: string }[]).some((c) => c.name === "flags")) {
   db.exec("ALTER TABLE listings ADD COLUMN flags TEXT NOT NULL DEFAULT ''");

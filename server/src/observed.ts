@@ -3,6 +3,7 @@
 // sales inferred from ALData stand snapshots are.
 import { db, transaction } from "./db.ts";
 import { getGameMeta } from "./gamedata.ts";
+import { isRevoked } from "./keys.ts";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -30,24 +31,53 @@ export interface ObservationReport {
     filledBuyOrder?: boolean;
     item: { name: string; level?: number; p?: string | null; data?: string; q?: number; price: number };
   }[];
+  /**
+   * New entries of the reporter's own trade history (the game's trade_history): trades they took part
+   * in, wherever they were. `event` is "sell" if the reporter gave the item, "buy" if they received it.
+   */
+  history?: {
+    at: number;
+    event: "buy" | "sell";
+    counterparty: string;
+    item: { name: string; level?: number; p?: string | null; data?: string; q?: number };
+    total: number;
+  }[];
 }
 
+/**
+ * A report is verified when ALNinja saw that merchant offering those goods at that price around the time
+ * (15 minutes either side, for ALData's refresh lag). Unverified reports are kept but don't count.
+ */
+const VERIFIED = `EXISTS (SELECT 1 FROM listings l WHERE l.merchant = o.merchant AND l.side = o.side AND l.item = o.item
+  AND l.level = o.level AND l.variant = o.variant AND l.price = o.price AND l.first_seen <= o.at + 900000
+  AND (l.closed_at IS NULL OR l.closed_at >= o.at - 900000))`;
+
+/** Verified, and neither the reporting character nor whoever vouched for it is revoked. */
+const usable = (o: { verified: number; reporter: string; key_owner: string }) =>
+  Boolean(o.verified) && !isRevoked(o.reporter) && !isRevoked(o.key_owner);
+
 const stmts = {
+  // The same trade reported by another character (one character's snippet never reports a trade twice,
+  // so identical trades from the same reporter are separate trades).
   duplicate: db.prepare(`
     SELECT 1 FROM observed_sales WHERE merchant = ? AND counterparty = ? AND side = ? AND item = ? AND level = ?
-      AND variant = ? AND price = ? AND quantity = ? AND at BETWEEN ? AND ? LIMIT 1`),
+      AND variant = ? AND price = ? AND quantity = ? AND at BETWEEN ? AND ? AND reporter != ? LIMIT 1`),
   insertSale: db.prepare(`
     INSERT INTO observed_sales (merchant, counterparty, side, item, level, variant, price, quantity, slot, region,
-      server, map, at, reporter, received_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+      server, map, at, reporter, received_at, key_owner)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   openCoverage: db.prepare(`
     SELECT id FROM observer_coverage WHERE reporter = ? AND merchant = ? AND end >= ? ORDER BY end DESC LIMIT 1`),
   extendCoverage: db.prepare("UPDATE observer_coverage SET end = ? WHERE id = ?"),
   insertCoverage: db.prepare("INSERT INTO observer_coverage (reporter, merchant, start, end) VALUES (?, ?, ?, ?)"),
-  observedSince: db.prepare("SELECT * FROM observed_sales WHERE at >= ? ORDER BY at"),
+  observedSince: db.prepare(`SELECT o.*, ${VERIFIED} AS verified FROM observed_sales o WHERE o.at >= ? ORDER BY o.at`),
   observedRecent: db.prepare(`
-    SELECT * FROM observed_sales WHERE (?1 IS NULL OR item = ?1) AND at >= ?2 AND (?3 = 'ALL' OR region = ?3)
-    ORDER BY at DESC LIMIT ?4`),
+    SELECT o.*, ${VERIFIED} AS verified FROM observed_sales o
+    WHERE (?1 IS NULL OR o.item = ?1) AND o.at >= ?2 AND (?3 = 'ALL' OR o.region = ?3)
+    ORDER BY o.at DESC LIMIT ?4`),
+  listingAt: db.prepare(`
+    SELECT 1 FROM listings WHERE merchant = ? AND side = ? AND item = ? AND level = ? AND variant = ? AND price = ?
+      AND first_seen <= ? AND (closed_at IS NULL OR closed_at >= ?) LIMIT 1`),
   inferredSince: db.prepare(`
     SELECT s.*, l.close_reason FROM sales s JOIN listings l ON l.id = s.listing_id WHERE s.at >= ? ORDER BY s.at`),
   coverageSince: db.prepare("SELECT * FROM observer_coverage WHERE end >= ?"),
@@ -98,6 +128,24 @@ export function validateReport(body: unknown): string | null {
       }
     }
   }
+  if (r.history !== undefined) {
+    if (!Array.isArray(r.history) || r.history.length > 100) return "history: up to 100 entries";
+    for (const [i, h] of r.history.entries()) {
+      const bad = (m: string) => `history[${i}].${m}`;
+      if (!h || typeof h !== "object") return bad("must be an object");
+      if (!num(h.at, 0, 1e15)) return bad("at: milliseconds since epoch");
+      if (h.event !== "buy" && h.event !== "sell") return bad('event: "buy" or "sell"');
+      if (typeof h.counterparty !== "string" || !NAME.test(h.counterparty)) return bad("counterparty: a character name");
+      const it = h.item;
+      if (!it || typeof it !== "object" || typeof it.name !== "string" || !ITEM.test(it.name)) return bad("item.name");
+      if (it.level !== undefined && !int(it.level, 0, 30)) return bad("item.level");
+      if (it.q !== undefined && !int(it.q, 1, 1e7)) return bad("item.q");
+      for (const f of ["p", "data"] as const) {
+        if (it[f] != null && (typeof it[f] !== "string" || !CODE.test(it[f]!))) return bad(`item.${f}`);
+      }
+      if (!int(h.total, 1, 1e15)) return bad("total: whole gold");
+    }
+  }
   return null;
 }
 
@@ -107,11 +155,48 @@ export function validateReport(body: unknown): string | null {
  * Stores one report: new observed sales (de-duplicated across reporters) and coverage of the
  * merchants in view. Times are shifted by the reporter's clock skew (receivedAt - sentAt).
  */
-export function recordReport(r: ObservationReport, receivedAt: number) {
+export function recordReport(r: ObservationReport, receivedAt: number, keyOwner = "admin") {
   const skew = receivedAt - r.sentAt;
   let stored = 0;
   let duplicates = 0;
+  let unresolved = 0;
+  const store = (
+    merchant: string, counterparty: string, side: string, item: string, level: number, variant: string,
+    price: number, quantity: number, slot: string | null, at: number,
+  ) => {
+    if (stmts.duplicate.get(merchant, counterparty, side, item, level, variant, price, quantity, at - 2 * MINUTE,
+      at + 2 * MINUTE, r.reporter)) {
+      duplicates++;
+      return;
+    }
+    stmts.insertSale.run(merchant, counterparty, side, item, level, variant, price, quantity, slot, r.region ?? null,
+      r.server ?? null, r.map ?? null, at, r.reporter, receivedAt, keyOwner);
+    stored++;
+  };
   transaction(() => {
+    // The reporter's own trades. Each entry says whether they gave or got the item, not whose stand
+    // it was: that's whichever party ALNinja saw offering it at that unit price.
+    for (const h of r.history ?? []) {
+      const level = h.item.level ?? 0;
+      const variant = [h.item.p, h.item.data].filter((v) => typeof v === "string" && v).join("/");
+      const quantity = h.item.q ?? 1;
+      const price = Math.round(h.total / quantity);
+      const at = Math.round(h.at + skew);
+      const me = r.reporter;
+      const them = h.counterparty;
+      // [stand owner, side of their listing, other party] candidates, most likely first.
+      const candidates: [string, "sell" | "buy", string][] = h.event === "sell"
+        ? [[me, "sell", them], [them, "buy", me]] // I gave it: my stand sold, or I filled their buy order
+        : [[them, "sell", me], [me, "buy", them]]; // I got it: I bought from their stand, or my buy order filled
+      const hit = candidates.find(([owner, side]) =>
+        stmts.listingAt.get(owner, side, h.item.name, level, variant, price, at + DETECTION_LAG_MS, at - DETECTION_LAG_MS));
+      if (!hit) {
+        unresolved++;
+        continue;
+      }
+      store(hit[0], hit[2], hit[1], h.item.name, level, variant, price, quantity, null, at);
+    }
+
     for (const s of r.sales ?? []) {
       // "+$$" from a filled buy order names the stand owner as buyer; from a stand purchase, as seller.
       const side = s.filledBuyOrder ? "buy" : "sell";
@@ -120,15 +205,8 @@ export function recordReport(r: ObservationReport, receivedAt: number) {
       const level = s.item.level ?? 0;
       const variant = [s.item.p, s.item.data].filter((v) => typeof v === "string" && v).join("/");
       const quantity = s.item.q ?? 1;
-      const at = Math.round(s.at + skew);
-      if (stmts.duplicate.get(merchant, counterparty, side, s.item.name, level, variant, s.item.price, quantity,
-        at - MINUTE, at + MINUTE)) {
-        duplicates++;
-        continue;
-      }
-      stmts.insertSale.run(merchant, counterparty, side, s.item.name, level, variant, s.item.price, quantity,
-        s.slot ?? null, r.region ?? null, r.server ?? null, r.map ?? null, at, r.reporter, receivedAt);
-      stored++;
+      store(merchant, counterparty, side, s.item.name, level, variant, s.item.price, quantity, s.slot ?? null,
+        Math.round(s.at + skew));
     }
     const seenAt = Math.round(r.sentAt + skew);
     for (const merchant of new Set(r.inView ?? [])) {
@@ -137,7 +215,7 @@ export function recordReport(r: ObservationReport, receivedAt: number) {
       else stmts.insertCoverage.run(r.reporter, merchant, seenAt, seenAt);
     }
   });
-  return { stored, duplicates, inView: r.inView?.length ?? 0 };
+  return { stored, duplicates, unresolved, inView: r.inView?.length ?? 0 };
 }
 
 // --- Matching inferred sales against observed ones ------------------------------------------------
@@ -205,7 +283,8 @@ const pct = (a: number, b: number) => (b ? a / b : null);
 /** Accuracy of inferred sales against observed trades over the last `days`. */
 export function accuracy(days: number) {
   const since = Date.now() - days * DAY;
-  const observed = stmts.observedSince.all(since) as unknown as Observed[];
+  const reported = stmts.observedSince.all(since) as unknown as (Observed & { verified: number; reporter: string; key_owner: string })[];
+  const observed = reported.filter(usable);
   // Inferred sales can trail observed ones by DETECTION_LAG_MS, so look a little further back for them.
   const inferred = (stmts.inferredSince.all(since - DETECTION_LAG_MS) as unknown as Inferred[]);
   const coverage = new Map<string, { start: number; end: number }[]>();
@@ -244,7 +323,13 @@ export function accuracy(days: number) {
     days,
     reporters: reporters.size,
     merchantHoursObserved: coveredMs / HOUR,
-    observed: { trades: observed.length, units: observed.reduce((a, o) => a + o.quantity, 0), untracked: observed.length - tracked.length },
+    observed: {
+      trades: observed.length,
+      units: observed.reduce((a, o) => a + o.quantity, 0),
+      untracked: observed.length - tracked.length,
+      /** Reports that didn't match any listing ALNinja saw (or came from revoked reporters): not counted. */
+      unverified: reported.length - observed.length,
+    },
     /** Share of observed units (at merchants ALData tracks) that we also inferred. */
     recall: pct(caughtUnits, observedUnits),
     /** Share of inferred units, at merchants a reporter was watching, that were really traded. */
@@ -261,8 +346,8 @@ export function accuracy(days: number) {
  * counterparty), plus inferred sales that no observed trade accounts for (source "estimated").
  */
 export function mergedTrades(item: string | null, region: string, since: number, inferred: Inferred[], limit: number) {
-  const observed = (stmts.observedRecent.all(item, since - DETECTION_LAG_MS, region, 5000) as unknown as Observed[])
-    .reverse();
+  const observed = (stmts.observedRecent.all(item, since - DETECTION_LAG_MS, region, 5000) as unknown as
+    (Observed & { verified: number; reporter: string; key_owner: string })[]).filter(usable).reverse();
   const { usedUnits } = match(observed, [...inferred].sort((a, b) => a.at - b.at));
   const rows = [
     ...observed.filter((o) => o.at >= since).map((o) => ({
