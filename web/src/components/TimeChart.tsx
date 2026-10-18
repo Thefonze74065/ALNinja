@@ -24,9 +24,9 @@ const DAY_INCRS = [D, 2 * D, 7 * D, 14 * D, 30 * D, 91 * D, 182 * D, 365 * D];
 // Counts tick on whole numbers.
 const COUNT_INCRS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1e3, 2e3, 5e3, 1e4, 2e4, 5e4, 1e5, 1e6, 1e7];
 
-// Daily buckets are UTC days; label them in UTC so a bar never lands on the neighbouring date.
-const utcDate = (seconds: number) =>
-  new Date(seconds * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+// Times are labelled on the viewer's clock; daily buckets start at their local midnight.
+const dateLabel = (seconds: number) =>
+  new Date(seconds * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 const hourLabel = (seconds: number) =>
   new Date(seconds * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric" });
 
@@ -109,7 +109,6 @@ export function TimeChart({
         width: root.clientWidth,
         height,
         cursor: { points: { size: 8 } },
-        ...(daily ? { tzDate: (ts: number) => uPlot.tzDate(new Date(ts * 1000), "Etc/UTC") } : {}),
         scales: {
           // The data's own span plus half a period each side, so end bars aren't clipped. (uPlot's
           // auto-range goes wild for a single point.)
@@ -124,14 +123,14 @@ export function TimeChart({
           },
         },
         axes: [
-          daily ? { ...axis, incrs: DAY_INCRS, values: (_u, ticks) => ticks.map(utcDate) } : { ...axis, incrs: HOUR_INCRS },
+          daily ? { ...axis, incrs: DAY_INCRS, values: (_u, ticks) => ticks.map(dateLabel) } : { ...axis, incrs: HOUR_INCRS },
           { ...axis, size: 56, ...(counts ? { incrs: COUNT_INCRS } : {}), values: (_u, ticks) => ticks.map(format) },
         ],
         legend: { live: true },
         series: [
           {
-            label: daily ? "Day (UTC)" : "Time",
-            value: (_u: uPlot, v: number | null) => (v == null ? "—" : daily ? utcDate(v) : hourLabel(v)),
+            label: daily ? "Day" : "Time",
+            value: (_u: uPlot, v: number | null) => (v == null ? "—" : daily ? dateLabel(v) : hourLabel(v)),
           },
           ...series.map((s) => ({
             label: s.label,

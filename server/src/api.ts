@@ -58,7 +58,8 @@ api.get("/items/:item", (c) => {
     region,
     meta: getGameMeta().items[item] ?? null,
     variants: history(item, region, days),
-    velocity: velocity(item, region, days),
+    // ?tz= is the viewer's UTC offset in minutes, so trade periods follow their clock.
+    velocity: velocity(item, region, days, Math.min(Math.max(Number(c.req.query("tz")) || 0, -840), 840) * 60_000),
     listings: openListings(item, region),
     sales: recentSales(item, region, Date.now() - days * DAY, 200),
     upgrades: upgradeCosts(item, region, snapshot(region)),

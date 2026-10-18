@@ -82,7 +82,7 @@ export interface PriceBand {
 export interface Velocity {
   level: number;
   variant: string;
-  /** Trade slots are hours for ranges up to two days, UTC days beyond. */
+  /** Trade slots are hours for ranges up to two days, days beyond, both on the viewer's clock. */
   bucket: "hour" | "day";
   trades: { t: number; sold: number; bought: number; trades: number }[];
   bands: PriceBand[];
@@ -242,5 +242,7 @@ export const api = {
     get<Deal[]>(`/deals?${new URLSearchParams({ region, ...params })}`),
   accuracy: (days: number) => fetch(`/api/v1/accuracy?days=${days}`).then((r) => r.json() as Promise<Accuracy>),
   item: (item: string, days: number, region: string) =>
-    get<ItemDetail>(`/items/${encodeURIComponent(item)}?days=${days}&region=${region}`),
+    get<ItemDetail>(
+      `/items/${encodeURIComponent(item)}?days=${days}&region=${region}&tz=${-new Date().getTimezoneOffset()}`,
+    ),
 };

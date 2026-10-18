@@ -80,7 +80,7 @@ const stmts = {
   // Trades bucketed by ?4 ms (an hour or a day). Bound JS numbers arrive as REAL, so cast for
   // integer division.
   itemSalesBuckets: db.prepare(`
-    SELECT level, variant, side, at / CAST(?4 AS INTEGER) AS slot, COUNT(*) AS trades, SUM(quantity) AS units FROM sales
+    SELECT level, variant, side, (at + CAST(?5 AS INTEGER)) / CAST(?4 AS INTEGER) AS slot, COUNT(*) AS trades, SUM(quantity) AS units FROM sales
     WHERE item = ?1 AND (?2 = 'ALL' OR region = ?2) AND at >= ?3
     GROUP BY level, variant, side, slot ORDER BY slot`),
   recentSales: db.prepare(`
@@ -303,7 +303,8 @@ const median = (xs: number[]) => {
  * Trades over time and time-to-sell by price band (relative to market at listing time), per variant.
  * Trades are per hour for ranges up to two days, per UTC day beyond that (`bucket`).
  */
-export function velocity(item: string, region: string, days: number) {
+/** `tzOffsetMs`: the viewer's offset from UTC (local = UTC + offset), so periods start at local midnight/hours. */
+export function velocity(item: string, region: string, days: number, tzOffsetMs = 0) {
   const since = Date.now() - days * DAY;
   const bucketMs = days <= 2 ? HOUR : DAY;
   const bucket = bucketMs === HOUR ? "hour" : "day";
@@ -319,11 +320,11 @@ export function velocity(item: string, region: string, days: number) {
   };
 
   const slots = new Map<string, Map<number, Slot>>();
-  for (const r of stmts.itemSalesBuckets.all(item, region, since, bucketMs) as any[]) {
+  for (const r of stmts.itemSalesBuckets.all(item, region, since, bucketMs, tzOffsetMs) as any[]) {
     get(r.level, r.variant);
     const k = `${r.level}\u0000${r.variant}`;
     const bySlot = slots.get(k) ?? slots.set(k, new Map()).get(k)!;
-    const d = bySlot.get(r.slot) ?? { t: r.slot * bucketMs, sold: 0, bought: 0, trades: 0 };
+    const d = bySlot.get(r.slot) ?? { t: r.slot * bucketMs - tzOffsetMs, sold: 0, bought: 0, trades: 0 };
     if (r.side === "sell") d.sold += r.units;
     else d.bought += r.units;
     d.trades += r.trades;

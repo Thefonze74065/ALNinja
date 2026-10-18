@@ -99,7 +99,9 @@ export function ItemPage({
     const now = latest?.sellers ? cap(latest.price) : null;
     const then = first ? cap(first.price) : null;
     return {
-      times: h.map((p) => p.t),
+      // A daily point is the day's close, its last hourly reading: plot it then rather than at UTC
+      // midnight, so it lands on the right time in the viewer's zone.
+      times: h.map((p) => (p.t < selected.hourlyFrom ? p.t + DAY - HOUR : p.t)),
       price,
       merchants,
       latest,
@@ -111,15 +113,18 @@ export function ItemPage({
 
   const velocity = useMemo(() => detail?.velocity.find((v) => sameVariant(v, selected)) ?? null, [detail, selected]);
 
-  // Trade bars per hour (short ranges) or UTC day, from the later of the range start and the start of
-  // tracking (earlier periods weren't observed, so they aren't zeros), with quiet periods filled in.
+  // Trade bars per hour (short ranges) or day on the viewer's clock (the server buckets with ?tz=), from
+  // the later of the range start and the start of tracking (earlier periods weren't observed, so they
+  // aren't zeros), with quiet periods filled in.
   const trades = useMemo(() => {
     if (!detail) return null;
     const hourly = days <= 2;
     const step = hourly ? HOUR : DAY;
     const bySlot = new Map((velocity?.trades ?? []).map((d) => [d.t, d]));
-    const now = Math.floor(Date.now() / step) * step;
-    const tracked = detail.trackingSince != null ? Math.floor(detail.trackingSince / step) * step : now;
+    const offset = -new Date().getTimezoneOffset() * 60_000;
+    const slotOf = (t: number) => Math.floor((t + offset) / step) * step - offset;
+    const now = slotOf(Date.now());
+    const tracked = detail.trackingSince != null ? slotOf(detail.trackingSince) : now;
     const start = Math.max(now - (hourly ? days * 24 - 1 : days - 1) * step, tracked);
     const times: number[] = [];
     for (let t = start; t <= now; t += step) times.push(t);
@@ -245,7 +250,7 @@ export function ItemPage({
             <div className="panel">
               <h2>Trades per {trades.hourly ? "hour" : "day"}</h2>
               <p className="muted small">
-                Estimated units traded at stands each {trades.hourly ? "hour" : "day (UTC)"}
+                Estimated units traded at stands each {trades.hourly ? "hour" : "day"}
                 {trades.clipped && detail?.trackingSince
                   ? `, since tracking began ${new Date(detail.trackingSince).toLocaleDateString()}`
                   : ""}

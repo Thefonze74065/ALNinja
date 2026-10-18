@@ -213,7 +213,7 @@ describe("NPC shop prices", () => {
 });
 
 describe("velocity", () => {
-  test("trades land on whole hour / UTC day boundaries", () => {
+  test("trades land on whole hours / days of the viewer's clock", () => {
     const t = now - 3 * HOUR;
     ingest([merchant("VelA", t, { trade1: { name: "t_vel", price: 100, q: 10 } })], t);
     ingest([merchant("VelA", t + HOUR, { trade1: { name: "t_vel", price: 100, q: 6 } })], t + HOUR);
@@ -225,5 +225,11 @@ describe("velocity", () => {
     const [hourly] = app.market.velocity("t_vel", "ALL", 1);
     assert.equal(hourly.bucket, "hour");
     assert.equal(hourly.trades[0].t, Math.floor((t + HOUR) / HOUR) * HOUR);
+    // On the viewer's clock: a UTC-7 day starts at 07:00 UTC, a UTC+5:30 hour at half past.
+    const [pacific] = app.market.velocity("t_vel", "ALL", 7, -7 * HOUR);
+    assert.equal(pacific.trades[0].t % DAY, 7 * HOUR);
+    assert.equal(pacific.trades.reduce((a, d) => a + d.sold, 0), 4);
+    const [india] = app.market.velocity("t_vel", "ALL", 1, 5.5 * HOUR);
+    assert.equal(india.trades[0].t % HOUR, HOUR / 2);
   });
 });
