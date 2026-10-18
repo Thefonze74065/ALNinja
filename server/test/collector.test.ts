@@ -163,6 +163,31 @@ describe("listing lifecycle", () => {
     assert.equal(salesOf("Two").length, 1);
   });
 
+  test("stacks merged or split while repricing aren't sales (scroll3 case)", () => {
+    const keep = { trade1: { name: "t_keep9", price: 1 } };
+    ingest([merchant("Merge", T0, {
+      ...keep, trade2: { name: "t_merge", price: 259, q: 2 }, trade3: { name: "t_merge", price: 270 },
+    })], T0);
+    ingest([merchant("Merge", T0 + HOUR, {
+      ...keep, trade4: { name: "t_merge", price: 249 }, trade5: { name: "t_merge", price: 249, q: 2 },
+    })], T0 + HOUR);
+    ingest([merchant("Merge", T0 + 4 * HOUR, {
+      ...keep, trade4: { name: "t_merge", price: 249 }, trade5: { name: "t_merge", price: 249, q: 2 },
+    })], T0 + 4 * HOUR);
+    assert.equal(salesOf("Merge").length, 0);
+    const closed = listingsOf("Merge").filter((l) => l.item === "t_merge" && l.closed_at != null);
+    assert.deepEqual(closed.map((l) => l.close_reason), ["repriced", "repriced"]);
+  });
+
+  test("merged stacks smaller than what vanished count the difference as sold", () => {
+    const keep = { trade1: { name: "t_keep10", price: 1 } };
+    ingest([merchant("Merge2", T0, {
+      ...keep, trade2: { name: "t_merge2", price: 100, q: 3 }, trade3: { name: "t_merge2", price: 100, q: 3 },
+    })], T0);
+    ingest([merchant("Merge2", T0 + HOUR, { ...keep, trade4: { name: "t_merge2", price: 90, q: 5 } })], T0 + HOUR);
+    assert.deepEqual(salesOf("Merge2").map((s) => s.quantity), [1]);
+  });
+
   test("moving the same offer to another slot keeps the listing", () => {
     ingest([merchant("Move", T0, { trade1: { name: "t_move", price: 100 } })], T0);
     ingest([merchant("Move", T0 + HOUR, { trade7: { name: "t_move", price: 100 } })], T0 + HOUR);

@@ -174,14 +174,21 @@ function syncMerchant(m: Merchant, stats: Stats) {
 
   // A stand that emptied completely was packed up, not sold out between two polls.
   const standClosed = current.length === 0 && gone.length >= 3;
-  // New offers that already account for a vanished listing; each can explain only one.
-  const relistings = new Set<Offer>();
-  const relisting = (l: Offer) => current.find((o) => unmatched.has(o) && !relistings.has(o) && sameGoods(o, l));
-  /** The same goods came back (`o`): a reprice, or a withdrawal if at the same price. A smaller stack sold the difference. */
-  const resolveRelisted = (l: OpenListing, o: Offer, at: number) => {
-    relistings.add(o);
-    if (o.quantity < l.quantity && plausibleTrade(l, seen)) sale(l, l.quantity - o.quantity, at);
-    return o.price === l.price ? "withdrawn" : "repriced";
+  // New offers of the same goods account for vanished listings, unit for unit: stacks get merged and
+  // split when repricing, so a stack of 2 can explain two vanished singles, but no unit explains two.
+  const unclaimed = new Map<Offer, number>();
+  const left = (o: Offer) => unclaimed.get(o) ?? o.quantity;
+  const relisting = (l: Offer) => current.filter((o) => unmatched.has(o) && sameGoods(o, l) && left(o) > 0);
+  /** The same goods came back (`offers`): a reprice, or a withdrawal if at the same price. Units not back were sold. */
+  const resolveRelisted = (l: OpenListing, offers: Offer[], at: number) => {
+    let missing = l.quantity;
+    for (const o of offers) {
+      const take = Math.min(missing, left(o));
+      unclaimed.set(o, left(o) - take);
+      missing -= take;
+    }
+    if (missing > 0 && plausibleTrade(l, seen)) sale(l, missing, at);
+    return offers[0].price === l.price ? "withdrawn" : "repriced";
   };
 
   // The same item newly listed at a higher level: the vanished lower-level copies were consumed by
@@ -195,8 +202,8 @@ function syncMerchant(m: Merchant, stats: Stats) {
     let reason: string;
     if (standClosed) reason = "withdrawn";
     else {
-      const o = relisting(l);
-      if (o) reason = resolveRelisted(l, o, seen);
+      const offers = relisting(l);
+      if (offers.length) reason = resolveRelisted(l, offers, seen);
       else if (upgraded(l)) reason = "upgraded";
       // Not back yet: wait SALE_CONFIRM_MS before calling it a sale (see confirmPendingSales).
       else reason = plausibleTrade(l, seen) ? "pending" : "withdrawn";
@@ -207,8 +214,8 @@ function syncMerchant(m: Merchant, stats: Stats) {
 
   // Goods that vanished in an earlier update and are back now (or back upgraded) weren't sold.
   for (const p of stmts.pendingFor.all(m.id, seen - SALE_CONFIRM_MS) as unknown as PendingListing[]) {
-    const o = relisting(p);
-    if (o) stmts.setReason.run(resolveRelisted(p, o, p.closed_at), p.id);
+    const offers = relisting(p);
+    if (offers.length) stmts.setReason.run(resolveRelisted(p, offers, p.closed_at), p.id);
     else if (upgraded(p)) stmts.setReason.run("upgraded", p.id);
   }
   for (const o of unmatched) {
