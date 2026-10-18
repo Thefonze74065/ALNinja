@@ -160,6 +160,8 @@ export interface UpgradeStep {
   scrollPrice: number | null;
   fromBase: number | null;
   baseCopies: number;
+  made: number | null;
+  madeFrom: number | null;
   market: number | null;
   cheapest: number | null;
   buyAt: number | null;
@@ -180,7 +182,7 @@ export interface Movers {
   mostTraded: MarketRow[];
 }
 
-export type DealKind = "npc" | "underpriced" | "flip";
+export type DealKind = "npc" | "underpriced" | "flip" | "craft";
 
 export interface DealWhere {
   merchant: string;
@@ -209,6 +211,9 @@ export interface Deal {
   source: "merchant" | "npc";
   seller: DealWhere & { listedAt: number | null };
   buyer: (DealWhere & { price: number; quantity: number }) | null;
+  madeFrom?: number;
+  madeCost?: number;
+  nextAsk?: number;
 }
 
 export interface Status {

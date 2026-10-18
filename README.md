@@ -57,6 +57,9 @@ history, so ALNinja keeps its own:
    (NPC value is a port of the game's own `calculate_item_value`, including upgrade/compound levels,
    gifted items paying 1 gold and temporary ones 1/8). **flip**: another merchant's buy order pays more
    than this ask. **underpriced**: well under the cheapest competing seller (a resale estimate).
+   **craft**: an upgraded/compounded item well under both the next seller and its expected cost to make
+   (the cheapest lower level plus scrolls over the expected attempts, from the game's own success
+   chances; also shown per level on item pages and at `GET /api/v1/upgrades/:item`).
 6. **Daily archive and retention**: each completed UTC day, every hourly price row and every sale is
    written to `data/archive/{prices,sales}/YYYY/YYYY-MM-DD.csv.gz`. These files are kept forever and can be
    downloaded through the API. The day is also summarized into `price_daily`. Hourly rows older than
@@ -181,7 +184,7 @@ Scripts and bots should use the versioned public API. It's documented in the app
 - `GET /api/v1/listings/:item?side=sell`: open listings with server, map and coordinates
 - `GET /api/v1/sales?item=&hours=24`: recent estimated sales
 - `GET /api/v1/movers?window=24h|7d`: biggest risers/fallers and most traded
-- `GET /api/v1/deals?kind=npc,flip,underpriced`: listings worth buying now
+- `GET /api/v1/deals?kind=npc,flip,underpriced,craft`: listings worth buying now
 - `GET /api/v1/upgrades/:item`: expected cost of each upgrade/compound level, from +0 and by the
   cheapest route (buy a lower level and upgrade), at the game's base success chances
 - `GET /api/v1/archive`: daily CSV files (all hourly prices, all sales) for bulk analysis

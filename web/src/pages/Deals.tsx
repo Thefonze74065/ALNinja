@@ -24,6 +24,13 @@ const KINDS: { kind: DealKind; label: string; worth: string; blurb: string }[] =
     blurb:
       "Listed well under the cheapest competing seller or NPC shop, the price you could relist at. A resale estimate, not a guarantee: rare items often sit for a while.",
   },
+  {
+    kind: "craft",
+    label: "Below cost to make",
+    worth: "Next best",
+    blurb:
+      "Upgraded or compounded items listed well under both the next seller and what they'd cost to make (the cheapest lower level plus scrolls, over the expected attempts at the game's base chances): the cheapest way to get one by a margin. Profit is what you save over the next-best option.",
+  },
 ];
 
 function Where({ w, npc = false }: { w: DealWhere; npc?: boolean }) {
@@ -77,7 +84,7 @@ export function Deals({ meta, region }: { meta: GameMeta | null; region: string 
       </div>
       <p className="muted small">{info.blurb}</p>
       <div className="toolbar">
-        {kind === "underpriced" && (
+        {(kind === "underpriced" || kind === "craft") && (
           <label className="check">
             At least
             <select value={minDiscount} onChange={(e) => setMinDiscount(e.target.value)}>
@@ -123,7 +130,17 @@ export function Deals({ meta, region }: { meta: GameMeta | null; region: string 
                     <ItemCell meta={meta} row={d} />
                   </td>
                   <td className="num">{gold(d.price)}</td>
-                  <td className="num">{gold(d.reference)}</td>
+                  <td
+                    className="num"
+                    title={d.kind === "craft" ? `Make from +${d.madeFrom}: ${gold(d.madeCost)} · next ask: ${gold(d.nextAsk)}` : undefined}
+                  >
+                    {gold(d.reference)}
+                    {d.kind === "craft" && (
+                      <span className="muted small">
+                        {" "}{d.reference === d.madeCost ? `make from +${d.madeFrom}` : "next ask"}
+                      </span>
+                    )}
+                  </td>
                   <td className="num price">{gold(d.profitPerUnit)}</td>
                   <td className="num hide-sm">{percent(d.discount).replace("+", "")}</td>
                   <td className="num hide-sm">{d.quantity}</td>

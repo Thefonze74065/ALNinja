@@ -2,6 +2,7 @@ import { config } from "./config.ts";
 import { db } from "./db.ts";
 import { capAtShop, getGameMeta, npcSellValue, npcShopPrice } from "./gamedata.ts";
 import { mergedTrades, type Inferred } from "./observed.ts";
+import { upgradeCosts } from "./upgrades.ts";
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
@@ -364,7 +365,7 @@ export function velocity(item: string, region: string, days: number) {
   return [...result.values()];
 }
 
-export type DealKind = "npc" | "underpriced" | "flip";
+export type DealKind = "npc" | "underpriced" | "flip" | "craft";
 
 interface Where {
   merchant: string;
@@ -400,6 +401,11 @@ export interface Deal {
   seller: Where & { listedAt: number | null };
   /** Flips only: the buy order to sell into. */
   buyer: (Where & { price: number; quantity: number }) | null;
+  /** Craft deals only: the level the cheapest way to make it starts from (buy that, then upgrade). */
+  madeFrom?: number;
+  /** Craft deals only: expected cost to make one, and the next cheapest seller's ask. */
+  madeCost?: number;
+  nextAsk?: number;
 }
 
 export interface DealOptions {
@@ -429,6 +435,10 @@ let dealCachePoll: number | null = null;
  *   could relist at), for items with at least minSellers merchants selling. A resale estimate.
  * - flip: someone's buy order pays more than the cheapest source: another merchant's ask, or an NPC
  *   shop (merchant asks above the shop price are skipped; the shop is the better source).
+ * - craft: an upgraded or compounded item at least minDiscount under both its expected cost to make
+ *   (upgrades.ts, by the cheapest route from a lower level) and the next cheapest seller: the cheapest
+ *   way to get one by a margin. Needs another seller, since base-chance costs at high levels run far
+ *   above what grace and offerings make real.
  */
 export function deals(region: string, opts: DealOptions): Deal[] {
   const cacheKey = `${region}|${JSON.stringify(opts)}`;
@@ -531,6 +541,28 @@ export function deals(region: string, opts: DealOptions): Deal[] {
     }
   }
 
+  if (opts.kinds.includes("craft")) {
+    const rows = snapshot(region);
+    const costs = new Map<string, ReturnType<typeof upgradeCosts>>();
+    const cheapestAsk = new Map<string, Map<string, number>>();
+    for (const l of sells) {
+      const byMerchant = cheapestAsk.get(key(l)) ?? cheapestAsk.set(key(l), new Map()).get(key(l))!;
+      byMerchant.set(l.merchant, Math.min(l.price, byMerchant.get(l.merchant) ?? Infinity));
+    }
+    for (const l of sells) {
+      if (!l.level || l.variant) continue;
+      if (!costs.has(l.item)) costs.set(l.item, upgradeCosts(l.item, region, rows));
+      const step = costs.get(l.item)?.steps.find((s) => s.level === l.level);
+      if (!step?.made || step.madeFrom == null) continue;
+      let nextAsk = Infinity;
+      for (const [m, price] of cheapestAsk.get(key(l))!) if (m !== l.merchant) nextAsk = Math.min(nextAsk, price);
+      if (nextAsk === Infinity) continue;
+      const reference = Math.min(step.made, nextAsk);
+      if (l.price > reference * (1 - opts.minDiscount)) continue;
+      out.push(make("craft", l, reference, l.quantity, { madeFrom: step.madeFrom, madeCost: step.made, nextAsk }));
+    }
+  }
+
   const result = out
     .filter((d) => d.profitPerUnit >= opts.minProfit)
     .sort((a, b) => (opts.sort === "discount" ? b.discount - a.discount : 0) || b.totalProfit - a.totalProfit)
@@ -539,7 +571,7 @@ export function deals(region: string, opts: DealOptions): Deal[] {
   return result;
 }
 
-const DEAL_KINDS: DealKind[] = ["npc", "underpriced", "flip"];
+const DEAL_KINDS: DealKind[] = ["npc", "underpriced", "flip", "craft"];
 
 /** Parses deal query parameters (shared by the UI and public endpoints), clamping to sane ranges. */
 export function dealOptions(q: (name: string) => string | undefined): DealOptions {

@@ -6,9 +6,9 @@ import { archiveFile, listArchive } from "./archive.ts";
 import { config } from "./config.ts";
 import { addCorrection, correctionProblem, recentCorrections, type Correction } from "./corrections.ts";
 import { isRevoked, KEY_SUBJECT, keyOwner, keyStatus } from "./keys.ts";
-import { upgradeCosts } from "./upgrades.ts";
 import { accuracy, recordReport, validateReport, type ObservationReport } from "./observed.ts";
 import { dealOptions, deals, HOUR, history, lastPoll, movers, openListings, recentSales, regionParam, snapshot, type MarketRow } from "./market.ts";
+import { upgradeCosts } from "./upgrades.ts";
 
 const clamp = (raw: string | undefined, fallback: number, min: number, max: number) => {
   const n = Number(raw);
@@ -54,7 +54,7 @@ v1.get("/", (c) =>
       "GET /api/v1/auth/:character": "Whether a character has a reporting key; with Authorization, whether it's valid",
       "GET /api/v1/archive": "Daily CSV files of every hourly price row and every sale, for bulk analysis",
       "GET /api/v1/deals":
-        "Listings worth buying now. ?region= &kind=npc,underpriced,flip &min_discount=0.2 &min_sellers=3 &min_profit=1 &sort=profit|discount &limit=100 (max 500)",
+        "Listings worth buying now. ?region= &kind=npc,underpriced,flip,craft &min_discount=0.2 &min_sellers=3 &min_profit=1 &sort=profit|discount &limit=100 (max 500)",
     },
   }),
 );
@@ -100,7 +100,8 @@ v1.get("/listings/:item", (c) => {
 });
 
 v1.get("/upgrades/:item", (c) => {
-  const costs = upgradeCosts(c.req.param("item"), regionParam(c.req.query("region")));
+  const region = regionParam(c.req.query("region"));
+  const costs = upgradeCosts(c.req.param("item"), region, snapshot(region));
   return costs ? c.json(costs) : c.json({ error: "Not an upgradeable or compoundable item" }, 404);
 });
 

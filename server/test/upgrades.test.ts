@@ -3,7 +3,9 @@ import { describe, test } from "node:test";
 import { app, merchant } from "./helpers.ts";
 
 const { setGameData } = await import("../src/gamedata.ts");
-const { upgradeCosts, itemGrade } = await import("../src/upgrades.ts");
+const { upgradeCosts: costsFrom, itemGrade } = await import("../src/upgrades.ts");
+const { deals, dealOptions, snapshot } = app.market;
+const upgradeCosts = (item: string, region: string) => costsFrom(item, region, snapshot(region));
 
 setGameData({
   version: 1,
@@ -31,6 +33,10 @@ app.collector.ingest([merchant("UpgShop", now, {
   trade3: { name: "scroll1", price: 200 },
   trade4: { name: "scroll2", price: 50 },
   trade5: { name: "t_belt", price: 10 },
+  trade6: { name: "t_star", level: 4, price: 5000 },
+}), merchant("UpgShop2", now, {
+  trade1: { name: "t_star", level: 3, price: 1200 },
+  trade2: { name: "t_star", level: 4, price: 30000 },
 })], now);
 
 describe("upgrade costs", () => {
@@ -49,7 +55,9 @@ describe("upgrade costs", () => {
     assert.equal(l2.fromBase, 460);
     assert.deepEqual([l3.scroll, l3.scrollPrice, l3.fromBase], ["scroll1", 200, 2640]); // grade 1 at +2: market scroll
     assert.deepEqual([l3.market, l3.cheapest, l3.buyAt], [1000, 1000, 3]);
-    assert.deepEqual([l4.scroll, l4.fromBase, l4.cheapest, l4.buyAt], ["scroll2", 26900, 10500, 3]);
+    assert.deepEqual([l3.made, l3.madeFrom], [2640, 0]);
+    assert.deepEqual([l4.scroll, l4.fromBase, l4.made, l4.madeFrom], ["scroll2", 26900, 10500, 3]); // (1000 + 50) / 0.1
+    assert.deepEqual([l4.market, l4.cheapest, l4.buyAt], [5000, 5000, 4]);
     assert.equal(l4.baseCopies, 1 / (0.5 * 0.5 * 0.25 * 0.1));
     assert.equal(c.steps.length, 4, "stops where the game has no chance for the next level");
   });
@@ -66,5 +74,15 @@ describe("upgrade costs", () => {
   test("items that start high grade use that grade's table; plain items have none", () => {
     assert.equal(upgradeCosts("t_rare", "ALL")!.steps[0].chance, 0.3);
     assert.equal(upgradeCosts("t_plain", "ALL"), null);
+  });
+});
+
+describe("craft deals", () => {
+  test("upgraded items listed well under their cost to make", () => {
+    const found = deals("ALL", dealOptions((n) => ({ kind: "craft" } as Record<string, string>)[n]))
+      .filter((d) => d.item === "t_star");
+    // +3 at 1000: the next seller asks 1200, under the 2640 cost to make, and 1000 isn't 20% under 1200.
+    // +4 at 5000: making one (10500) beats the next seller (30000).
+    assert.deepEqual(found.map((d) => [d.level, d.price, d.reference, d.madeFrom, d.nextAsk]), [[4, 5000, 10500, 3, 30000]]);
   });
 });

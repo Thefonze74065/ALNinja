@@ -7,7 +7,7 @@
 // player and the whole server), offerings and higher-grade scrolls only raise the chances, so real
 // costs tend to be somewhat lower; any single attempt can of course go much worse.
 import { getGameMeta, npcShopPrice, type ItemMeta } from "./gamedata.ts";
-import { snapshot } from "./market.ts";
+import type { MarketRow } from "./market.ts";
 
 /** calculate_item_grade from the game's common_functions.js: 0 normal, 1 high, 2 rare, 3 legendary, 4 max. */
 export function itemGrade(def: Pick<ItemMeta, "upgradeable" | "compoundable" | "grades">, level: number): number {
@@ -27,6 +27,10 @@ export interface UpgradeStep {
   fromBase: number | null;
   /** Expected +0 copies used up making one of this level from +0. */
   baseCopies: number;
+  /** Expected gold to make this level from the cheapest route to the level below (never buying this level). */
+  made: number | null;
+  /** The level that route buys at. */
+  madeFrom: number | null;
   /** Current lower-quartile ask at this level, or null if nobody's selling it. */
   market: number | null;
   /** Expected gold for the cheapest route: buy a lower level and make this one from it, or just buy it. */
@@ -43,23 +47,25 @@ export interface UpgradeCosts {
   steps: UpgradeStep[];
 }
 
-/** Expected costs of each level of a plain (no variant) item, or null if it can't be upgraded or compounded. */
-export function upgradeCosts(item: string, region: string): UpgradeCosts | null {
+/**
+ * Expected costs of each level of a plain (no variant) item, priced from a market snapshot (`rows`, of
+ * `region`), or null if it can't be upgraded or compounded.
+ */
+export function upgradeCosts(item: string, region: string, rows: MarketRow[]): UpgradeCosts | null {
   const meta = getGameMeta();
   const def = meta.items[item];
   if (!def || !(def.upgradeable || def.compoundable) || !meta.odds) return null;
   const compound = def.compoundable;
 
-  const rows = snapshot(region);
+  const asks = new Map<string, number | null>();
+  for (const r of rows) {
+    if (r.variant === "" && r.sellers > 0 && (r.item === item || /^c?scroll\d$/.test(r.item))) asks.set(`${r.item}|${r.level}`, r.price);
+  }
   /** What buying one costs now: the capped lower-quartile ask, or a shop's price if nobody's selling. */
-  const buy = (name: string, level: number) => {
-    const r = rows.find((r) => r.item === name && r.level === level && r.variant === "");
-    if (r && r.sellers > 0) return r.price;
-    return npcShopPrice(name, level, "");
-  };
+  const buy = (name: string, level: number) => asks.get(`${name}|${level}`) ?? npcShopPrice(name, level, "");
 
   const shop = npcShopPrice(item, 0, "");
-  const baseMarket = rows.find((r) => r.item === item && r.level === 0 && r.variant === "" && r.sellers > 0)?.price ?? null;
+  const baseMarket = asks.get(`${item}|0`) ?? null;
   const basePrice = buy(item, 0);
   // The server's item grade (def.igrade): the grade at +0, with the lost earring as its one exception.
   const igrade = item === "lostearring" ? 2 : itemGrade(def, 0);
@@ -84,11 +90,12 @@ export function upgradeCosts(item: string, region: string): UpgradeCosts | null 
     fromBase = make(fromBase);
     baseCopies = (copies * baseCopies) / chance;
     const made = make(cheapest);
+    const madeFrom = made == null ? null : buyAt;
     const market = buy(item, level);
     const buyIt = market != null && (made == null || market <= made);
     cheapest = buyIt ? market : made;
     buyAt = buyIt ? level : made == null ? null : buyAt;
-    steps.push({ level, chance, scroll, scrollPrice, fromBase, baseCopies, market, cheapest, buyAt });
+    steps.push({ level, chance, scroll, scrollPrice, fromBase, baseCopies, made, madeFrom, market, cheapest, buyAt });
   }
   return {
     item, kind: compound ? "compound" : "upgrade", region,
