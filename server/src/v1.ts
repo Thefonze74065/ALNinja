@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { archiveFile, listArchive } from "./archive.ts";
 import { config } from "./config.ts";
+import { addCorrection, correctionProblem, recentCorrections, type Correction } from "./corrections.ts";
 import { isRevoked, KEY_SUBJECT, keyOwner, keyStatus } from "./keys.ts";
 import { accuracy, recordReport, validateReport, type ObservationReport } from "./observed.ts";
 import { dealOptions, deals, HOUR, history, lastPoll, movers, openListings, recentSales, regionParam, snapshot, type MarketRow } from "./market.ts";
@@ -43,6 +44,9 @@ v1.get("/", (c) =>
       "GET /api/v1/movers": "Biggest price changes and most traded. ?region= &window=24h|7d &min_sellers=3 &limit=20",
       "GET /api/v1/accuracy": "How inferred sales compare with trades players' characters saw. ?days=7 (max 90)",
       "POST /api/v1/observations": "Report trades your characters saw or made (needs a reporting key); see /#/api",
+      "POST /api/v1/corrections":
+        "Mark a stretch of a merchant's vanished stock as not sold (its own character's key, or the admin token); see /#/api",
+      "GET /api/v1/corrections": "Corrections made in the last ?days=30 (max 365)",
       "GET /api/v1/auth": "How to get a reporting key (in-game mail)",
       "GET /api/v1/auth/:character": "Whether a character has a reporting key; with Authorization, whether it's valid",
       "GET /api/v1/archive": "Daily CSV files of every hourly price row and every sale, for bulk analysis",
@@ -170,6 +174,25 @@ v1.post("/observations", bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json
   if (isRevoked(report.reporter)) return c.json({ error: "This character's reports are not accepted" }, 403);
   return c.json(recordReport(report, Date.now(), owner));
 });
+
+v1.post("/corrections", bodyLimit({ maxSize: 4 * 1024, onError: (c) => c.json({ error: "Too large" }, 413) }), async (c) => {
+  const owner = keyOwner(c.req.header("authorization"));
+  if (!owner) {
+    return c.json({ error: "Missing or wrong reporting key (Authorization: Bearer <Character>:<key>). See GET /api/v1/auth" }, 401);
+  }
+  if (owner !== "admin" && overBudget(owner)) return c.json({ error: `At most ${REPORTS_PER_MINUTE} requests a minute per key` }, 429);
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Body must be JSON" }, 400);
+  }
+  const problem = correctionProblem(body, owner);
+  if (problem) return c.json({ error: problem }, 400);
+  return c.json(addCorrection(body as Correction, owner));
+});
+
+v1.get("/corrections", (c) => c.json({ corrections: recentCorrections(clamp(c.req.query("days"), 30, 1, 365)) }));
 
 v1.get("/auth", (c) =>
   c.json({

@@ -197,6 +197,20 @@ on_destroy = () => {
         </ol>
       )}
       <pre><code>{snippet}</code></pre>
+      <h3>Correcting your stand</h3>
+      <p className="small">
+        Took stock down while the snippet wasn't running, and it shows as sold? Mark that stretch as not sold
+        (times in epoch ms, up to 30 days back; leave out <code>item</code> for everything). A key can correct
+        its own character's stand; corrections are public at <code>GET /api/v1/corrections</code>.
+      </p>
+      <pre><code>{`fetch(\`\${ALNINJA_URL}/api/v1/corrections\`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Authorization: \`Bearer \${ALNINJA_KEY}\` },
+  body: JSON.stringify({
+    merchant: "YourCharacter", item: "hpbelt", note: "pulled, not sold",
+    from: Date.parse("2026-10-18T08:00Z"), to: Date.parse("2026-10-18T09:00Z"),
+  }),
+}).then((r) => r.json()).then(show_json);`}</code></pre>
     </div>
   );
 }

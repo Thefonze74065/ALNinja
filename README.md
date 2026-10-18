@@ -29,7 +29,7 @@ history, so ALNinja keeps its own:
    back (restocking, repricing), and if the same goods return it was a withdrawal or reprice (a smaller
    returning stack counts the difference as sold). Lower-level copies that vanish as the same item appears
    at a higher level were consumed upgrading or compounding (`upgraded`), not sold. If a
-   [reporter](#reporting-trades) was watching the stand the whole time the listing could have sold (a
+   reporter (see 4) was watching the stand the whole time the listing could have sold (a
    character with the stand in view, or the merchant itself sending its trade history), what it saw
    decides: with no witnessed trade the listing is `unsold`, not a sale. Sales are dated
    when the listing vanished. Sales feed
@@ -47,6 +47,12 @@ history, so ALNinja keeps its own:
    estimates against them (recall, precision, and why trades were missed or invented), which is how the
    estimation rules get tuned. Observations are kept across rebuilds and exported daily to
    `archive/observed/`.
+
+   **Corrections**: for a one-off mistake the rules can't see (stock pulled while nobody was watching),
+   `POST /api/v1/corrections` with `{"merchant", "item" (optional), "from", "to", "note"}` (epoch ms, up
+   to 30 days back) marks that merchant's vanished stock in that stretch as not sold, without a reset. A
+   reporting key can only correct its own character's stand; `REPORT_TOKEN` can correct any. Corrections
+   are public (`GET /api/v1/corrections`), kept across rebuilds and applied during them.
 5. **Deals**: buyable listings worth more elsewhere. **npc**: an NPC pays more than the asking price
    (NPC value is a port of the game's own `calculate_item_value`, including upgrade/compound levels,
    gifted items paying 1 gold and temporary ones 1/8). **flip**: another merchant's buy order pays more

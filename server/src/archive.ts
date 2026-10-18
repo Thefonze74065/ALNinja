@@ -97,6 +97,15 @@ export function exportDay(day: number) {
   stmts.markArchived.run(day, Date.now());
 }
 
+/** Rewrites an already archived day's sales file, after corrections removed some of its sales. */
+export function reexportSales(day: number) {
+  if (!stmts.archived.get(day)) return;
+  writeCsv("sales", day, (stmts.daySales.all(day, day + DAY) as any[]).map((s) => [
+    new Date(s.at).toISOString(), s.at, s.item, s.level, s.variant, s.region, s.side, s.price, s.quantity, s.merchant,
+    s.listed_at,
+  ]));
+}
+
 /**
  * Archives and summarizes every completed day not yet done, then retires hourly rows past retention.
  * Safe to run repeatedly; `force` re-exports and re-summarizes days that are already done (after a rebuild).

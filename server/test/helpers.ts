@@ -24,6 +24,7 @@ export const app = {
   archive: await import("../src/archive.ts"),
   observed: await import("../src/observed.ts"),
   keys: await import("../src/keys.ts"),
+  corrections: await import("../src/corrections.ts"),
   mail: await import("../src/mail.ts"),
   v1: (await import("../src/v1.ts")).v1,
 };

@@ -87,6 +87,8 @@ const stmts = {
     FROM listings WHERE close_reason = 'pending' AND closed_at < ? ORDER BY closed_at, id`),
   // Reporters whose characters had the merchant's stand in view for a whole stretch (see witnessed).
   watchers: db.prepare("SELECT reporter FROM observer_coverage WHERE merchant = ? AND start <= ? AND end >= ?"),
+  corrected: db.prepare(`
+    SELECT 1 FROM corrections WHERE merchant = ? AND (item IS NULL OR item = ?) AND from_at <= ?3 AND to_at >= ?3 LIMIT 1`),
   observedTrades: db.prepare(`
     SELECT quantity, reporter, key_owner FROM observed_sales WHERE merchant = ? AND side = ? AND item = ? AND level = ?
       AND variant = ? AND price = ? AND at BETWEEN ? AND ?`),
@@ -151,6 +153,7 @@ function syncMerchant(m: Merchant, stats: Stats) {
   const open = stmts.openListings.all(m.id) as unknown as OpenListing[];
 
   const sale = (l: OpenListing, quantity: number, at = seen) => {
+    if (corrected(m.id, l.item, at)) return;
     stmts.insertSale.run(l.id, m.id, l.side, l.item, l.level, l.variant, m.serverRegion, l.price, quantity,
       l.first_seen, at);
     stats.sales++;
@@ -285,6 +288,9 @@ function archive(raw: string, at: Date) {
   fs.writeFileSync(path.join(dir, `${iso.slice(11, 19).replaceAll(":", "-")}.json.gz`), zlib.gzipSync(raw));
 }
 
+/** A correction says this merchant's stock vanishing then wasn't a sale (see corrections.ts). */
+const corrected = (merchant: string, item: string, at: number) => Boolean(stmts.corrected.get(merchant, item, at));
+
 /** Reports can be a little behind or ahead of ALData's view of the stand. */
 const REPORT_SLACK_MS = 2 * 60_000;
 
@@ -307,6 +313,10 @@ function witnessed(l: PendingListing & { merchant: string }): number | null {
  */
 function confirmPendingSales(at: number, stats: Stats) {
   for (const l of stmts.duePending.all(at - SALE_CONFIRM_MS) as unknown as (PendingListing & { merchant: string })[]) {
+    if (corrected(l.merchant, l.item, l.closed_at)) {
+      stmts.setReason.run("withdrawn", l.id);
+      continue;
+    }
     const seen = witnessed(l);
     const units = seen == null ? l.quantity : Math.min(seen, l.quantity);
     stmts.setReason.run(units ? "gone" : "unsold", l.id);

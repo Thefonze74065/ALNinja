@@ -183,6 +183,21 @@ db.exec(`
     updated_at INTEGER NOT NULL
   );
 `);
+// Corrections: stretches in which a merchant's vanished listings weren't sales (say, stock pulled while
+// no reporter was watching). Kept across rebuilds and applied during them.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS corrections (
+    id         INTEGER PRIMARY KEY,
+    merchant   TEXT NOT NULL COLLATE NOCASE,
+    item       TEXT,             -- null: every item
+    from_at    INTEGER NOT NULL,
+    to_at      INTEGER NOT NULL,
+    note       TEXT,
+    created_by TEXT NOT NULL,    -- 'admin', or the character whose key made it
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS corrections_merchant ON corrections (merchant, to_at);
+`);
 // v0.6 observed_sales had no key_owner: who vouched for each observation ('admin' for REPORT_TOKEN).
 if (!(db.prepare("PRAGMA table_info(observed_sales)").all() as { name: string }[]).some((c) => c.name === "key_owner")) {
   db.exec("ALTER TABLE observed_sales ADD COLUMN key_owner TEXT NOT NULL DEFAULT 'admin'");

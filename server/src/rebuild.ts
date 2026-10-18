@@ -82,11 +82,11 @@ const { refreshGameData } = await import("./gamedata.ts");
 // Sale detection uses NPC shop prices, so load the same game data the live server uses.
 await refreshGameData();
 
-// Observed sales, coverage and reporting keys come from players, not the raw archive: carry them over first,
-// since what reporters saw decides pending sales during the replay.
+// Observed sales, coverage, reporting keys and corrections come from players, not the raw archive: carry them over first,
+// since they decide pending sales during the replay.
 if (fs.existsSync(liveDb)) {
   db.exec(`ATTACH DATABASE '${liveDb.replaceAll("'", "''")}' AS old`);
-  for (const table of ["observed_sales", "observer_coverage", "reporter_keys"]) {
+  for (const table of ["observed_sales", "observer_coverage", "reporter_keys", "corrections"]) {
     if (!db.prepare("SELECT 1 FROM old.sqlite_master WHERE type = 'table' AND name = ?").get(table)) continue;
     // Copy the columns both versions have (an older database may lack newer columns).
     const cols = (name: string) => (db.prepare(`PRAGMA ${name}.table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
