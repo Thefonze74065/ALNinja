@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type GameMeta, type Status } from "./api";
 import { ago } from "./format";
+import { Accuracy } from "./pages/Accuracy";
 import { ApiDocs } from "./pages/ApiDocs";
 import { Deals } from "./pages/Deals";
 import { ItemPage } from "./pages/ItemPage";
@@ -56,7 +57,7 @@ export function App() {
     api.status().then(setStatus, console.error);
   }, []);
 
-  const page = ["movers", "deals", "api", "item"].includes(parts[0]) ? parts[0] : "prices";
+  const page = ["movers", "deals", "api", "item", "accuracy"].includes(parts[0]) ? parts[0] : "prices";
   const lastPoll = status?.lastSuccessfulPoll;
   const failing = status?.lastPoll?.error;
 
@@ -95,6 +96,8 @@ export function App() {
           <Movers meta={meta} region={region} trackingSince={status?.tracking_since ?? null} />
         ) : page === "deals" ? (
           <Deals meta={meta} region={region} />
+        ) : page === "accuracy" ? (
+          <Accuracy meta={meta} />
         ) : page === "api" ? (
           <ApiDocs />
         ) : (
@@ -105,7 +108,7 @@ export function App() {
         Data from player merchants via{" "}
         <a href="https://github.com/earthiverse/ALData" target="_blank" rel="noreferrer">ALData</a>
         {status?.tracking_since && <> · tracking since {new Date(status.tracking_since).toLocaleDateString()}</>}
-        {" "}· Not affiliated with Adventure Land
+        {" "}· <a href="#/accuracy">Sales accuracy</a> · Not affiliated with Adventure Land
       </footer>
     </>
   );

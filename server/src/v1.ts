@@ -1,8 +1,11 @@
 // Public, versioned API for bots and other tools. Keep these shapes stable; add fields, don't rename.
+import { createHash, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { archiveFile, listArchive } from "./archive.ts";
 import { config } from "./config.ts";
+import { accuracy, recordReport, validateReport } from "./observed.ts";
 import { dealOptions, deals, HOUR, history, lastPoll, movers, openListings, recentSales, regionParam, snapshot, type MarketRow } from "./market.ts";
 
 const clamp = (raw: string | undefined, fallback: number, min: number, max: number) => {
@@ -17,7 +20,7 @@ export const v1 = new Hono();
 
 v1.use("*", async (c, next) => {
   await next();
-  if (c.res.status === 200) c.header("cache-control", "public, max-age=60");
+  if (c.req.method === "GET" && c.res.status === 200) c.header("cache-control", "public, max-age=60");
 });
 
 v1.get("/", (c) =>
@@ -38,6 +41,8 @@ v1.get("/", (c) =>
       "GET /api/v1/listings/:item": "Open merchant listings with location. ?region= &side=sell|buy",
       "GET /api/v1/sales": "Recent estimated sales. ?region= &item= &hours=24 (max 720) &limit=500 (max 2000)",
       "GET /api/v1/movers": "Biggest price changes and most traded. ?region= &window=24h|7d &min_sellers=3 &limit=20",
+      "GET /api/v1/accuracy": "How inferred sales compare with trades players' characters saw. ?days=7 (max 90)",
+      "POST /api/v1/observations": "Report trades your characters saw (needs the instance's REPORT_TOKEN); see /#/api",
       "GET /api/v1/archive": "Daily CSV files of every hourly price row and every sale, for bulk analysis",
       "GET /api/v1/deals":
         "Listings worth buying now. ?region= &kind=npc,underpriced,flip &min_discount=0.2 &min_sellers=3 &min_profit=1 &sort=profit|discount &limit=100 (max 500)",
@@ -133,5 +138,28 @@ v1.get("/archive/:kind/:file", (c) => {
     "content-disposition": `attachment; filename="alninja-${c.req.param("kind")}-${c.req.param("file")}"`,
   });
 });
+
+/** Constant-time check of "Authorization: Bearer <token>" against REPORT_TOKEN. */
+function authorized(header: string | undefined): boolean {
+  if (!config.reportToken || !header?.startsWith("Bearer ")) return false;
+  const digest = (v: string) => createHash("sha256").update(v).digest();
+  return timingSafeEqual(digest(header.slice(7).trim()), digest(config.reportToken));
+}
+
+v1.post("/observations", bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json({ error: "Report too large" }, 413) }), async (c) => {
+  if (!config.reportToken) return c.json({ error: "Reporting is not enabled on this instance" }, 404);
+  if (!authorized(c.req.header("authorization"))) return c.json({ error: "Missing or wrong report token" }, 401);
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Body must be JSON" }, 400);
+  }
+  const problem = validateReport(body);
+  if (problem) return c.json({ error: problem }, 400);
+  return c.json(recordReport(body as Parameters<typeof recordReport>[0], Date.now()));
+});
+
+v1.get("/accuracy", (c) => c.json(accuracy(clamp(c.req.query("days"), 7, 1, 90))));
 
 v1.notFound((c) => c.json({ error: "Not found. See GET /api/v1 for endpoints." }, 404));

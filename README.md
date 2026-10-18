@@ -31,16 +31,24 @@ history, so ALNinja keeps its own:
    at a higher level were consumed upgrading or compounding (`upgraded`), not sold. Sales are dated
    when the listing vanished. Sales feed
    sold-per-day figures, the most-traded list, and each item's time-to-sell by price band.
-4. **Deals**: buyable listings worth more elsewhere. **npc**: an NPC pays more than the asking price
+4. **Witnessed trades (optional)**: stand snapshots can't tell a sale from a take-down, but the game shows
+   every stand trade (the "+$$" event: seller, buyer, item, price, quantity) to characters that can see the
+   merchant. Characters running the snippet on the API page report those, plus which merchants they have in
+   view, to `POST /api/v1/observations` (authorized by `REPORT_TOKEN`). Witnessed trades show as **Seen**
+   with the buyer; the **Sales accuracy** page (`/#/accuracy`, `GET /api/v1/accuracy`) compares the
+   estimates against them (recall, precision, and why trades were missed or invented), which is how the
+   estimation rules get tuned. Observations are kept across rebuilds and exported daily to
+   `archive/observed/`.
+5. **Deals**: buyable listings worth more elsewhere. **npc**: an NPC pays more than the asking price
    (NPC value is a port of the game's own `calculate_item_value`, including upgrade/compound levels,
    gifted items paying 1 gold and temporary ones 1/8). **flip**: another merchant's buy order pays more
    than this ask. **underpriced**: well under the cheapest competing seller (a resale estimate).
-5. **Daily archive and retention**: each completed UTC day, every hourly price row and every sale is
+6. **Daily archive and retention**: each completed UTC day, every hourly price row and every sale is
    written to `data/archive/{prices,sales}/YYYY/YYYY-MM-DD.csv.gz`. These files are kept forever and can be
    downloaded through the API. The day is also summarized into `price_daily`. Hourly rows older than
    `HOURLY_RETENTION_DAYS` are then removed from the database (only once archived); long-range charts use
    the daily summaries.
-6. **Raw archive**: every raw `/merchants` response is saved gzipped under `data/raw/YYYY-MM-DD/`
+7. **Raw archive**: every raw `/merchants` response is saved gzipped under `data/raw/YYYY-MM-DD/`
    (~3 MB/day at 10-minute polls). This is the source of truth for [rebuilding](#rebuilding-from-the-raw-archive).
 
 Item names, categories and sprite icons come from the game's own `https://adventure.land/data.js`,
@@ -86,6 +94,7 @@ The included compose file sets `user: "568:568"`, TrueNAS SCALE's `apps` user, f
 | `REBUILD` | (unset) | Rebuild from the raw archive on startup, once per distinct value |
 | `RESET_DATA` | (unset) | **Deletes all collected history** (database, CSV archive, raw snapshots, backups) on startup and starts fresh, once per distinct value |
 | `HOURLY_RETENTION_DAYS` | `90` | Hourly price rows kept in the database (min 8); older ones live in the CSV archive |
+| `REPORT_TOKEN` | (unset) | Secret that lets characters report witnessed trades (`POST /api/v1/observations`); unset disables reporting. Use a long random string |
 | `RATE_LIMIT_PER_MINUTE` | `120` | Per-IP request budget for `/api` (0 disables) |
 | `TRUST_PROXY` | `false` | How to find the client IP for rate limiting: `cloudflare` (behind Cloudflare or a Cloudflare Tunnel: uses `CF-Connecting-IP`), `true` (other reverse proxies: the last `X-Forwarded-For` entry), `false` (exposed directly). Behind a proxy, leaving it `false` makes every visitor share one limit |
 | `ALDATA_URL` | `https://aldata.earthiverse.ca` | |
@@ -165,7 +174,8 @@ set `TRUST_PROXY` (`cloudflare` for Cloudflare). Node bots can call it over plai
 
 ## Security
 
-The site is read-only and has no accounts or secrets. All SQL is parameterized, archive downloads are
+The site has no accounts. The only write endpoint is trade reporting, which is disabled unless
+`REPORT_TOKEN` is set, checks the token in constant time, validates every field and caps request size. All SQL is parameterized, archive downloads are
 validated against the archive directory, and player-supplied text is escaped by React (and neutralized
 against spreadsheet formulas in the CSV exports). Responses carry a strict Content-Security-Policy, plus
 anti-framing, `nosniff`, HSTS and referrer headers. The API is rate-limited per client IP: set

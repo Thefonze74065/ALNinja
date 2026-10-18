@@ -27,6 +27,8 @@ export const config = {
   // Hourly price rows older than this move to the daily table (after being exported to the archive).
   // The 7-day figures need at least 8 days of hourly data.
   hourlyRetentionDays: Math.max(8, num("HOURLY_RETENTION_DAYS", 90)),
+  // Shared secret for POST /api/v1/observations (sale reports from players' characters). Unset disables it.
+  reportToken: process.env.REPORT_TOKEN?.trim() || null,
   // Per-IP request budget for /api; 0 disables limiting.
   rateLimitPerMinute: num("RATE_LIMIT_PER_MINUTE", 120),
   // Where the client IP comes from, for rate limiting:

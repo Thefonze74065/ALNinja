@@ -113,6 +113,16 @@ for (const [i, s] of snapshots.entries()) {
     console.log(`[rebuild] ${i + 1}/${snapshots.length} snapshots (${pct}%)`);
   }
 }
+// Observed sales and coverage come from players' characters, not the raw archive: carry them over.
+if (fs.existsSync(liveDb)) {
+  db.exec(`ATTACH DATABASE '${liveDb.replaceAll("'", "''")}' AS old`);
+  for (const table of ["observed_sales", "observer_coverage"]) {
+    if (db.prepare("SELECT 1 FROM old.sqlite_master WHERE type = 'table' AND name = ?").get(table)) {
+      db.exec(`INSERT INTO main.${table} SELECT * FROM old.${table}`);
+    }
+  }
+  db.exec("DETACH DATABASE old");
+}
 const archived = maintain(Date.now(), true);
 db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
 const counts = db.prepare(`

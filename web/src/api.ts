@@ -114,8 +114,31 @@ export interface Sale {
   quantity: number;
   merchant: string;
   region: string | null;
-  listedAt: number;
+  /** "observed": a player's character saw the trade; "estimated": inferred from stand snapshots. */
+  source: "observed" | "estimated";
+  /** The other player in an observed trade. */
+  counterparty: string | null;
+  listedAt: number | null;
   at: number;
+}
+
+export interface Accuracy {
+  days: number;
+  reporters: number;
+  merchantHoursObserved: number;
+  observed: { trades: number; units: number; untracked: number };
+  recall: number | null;
+  precision: number | null;
+  checkable: { sales: number; units: number };
+  missedReasons: Record<string, number>;
+  missed: {
+    merchant: string; counterparty: string; side: "sell" | "buy"; item: string; name: string; level: number;
+    variant: string; price: number; quantity: number; at: number; reason: string;
+  }[];
+  falsePositives: {
+    merchant: string; side: "sell" | "buy"; item: string; name: string; level: number; variant: string;
+    price: number; quantity: number; unconfirmed: number; listedAt: number; at: number;
+  }[];
 }
 
 export interface ItemDetail {
@@ -191,6 +214,7 @@ export const api = {
   movers: (region: string, window: string) => get<Movers>(`/movers?region=${region}&window=${window}`),
   deals: (region: string, params: Record<string, string>) =>
     get<Deal[]>(`/deals?${new URLSearchParams({ region, ...params })}`),
+  accuracy: (days: number) => fetch(`/api/v1/accuracy?days=${days}`).then((r) => r.json() as Promise<Accuracy>),
   item: (item: string, days: number, region: string) =>
     get<ItemDetail>(`/items/${encodeURIComponent(item)}?days=${days}&region=${region}`),
 };

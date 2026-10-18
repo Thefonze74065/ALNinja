@@ -361,8 +361,10 @@ export function ItemPage({
         <div className="panel">
           <h2>Recent sales</h2>
           <p className="muted small">
-            Estimated: stock that left a stand priced near the market and wasn't put back within 2 hours (so the
-            latest sales appear with that delay). Quantity drops count as partial sales.
+            <span className="badge">Seen</span> trades were witnessed in game by a reporting character.{" "}
+            <span className="badge badge-muted">Estimated</span> ones are inferred from stands: stock that left a stand
+            priced near the market and wasn't put back within 2 hours, so they appear with that delay.{" "}
+            <a href="#/accuracy">How accurate are estimates?</a>
           </p>
           {sales.length === 0 ? (
             <p className="muted">No sales seen in the last {rangeLabel}.</p>
@@ -373,10 +375,12 @@ export function ItemPage({
                   <tr>
                     <th>Trade</th>
                     <th>Merchant</th>
+                    <th className="hide-sm">With</th>
                     <th className="hide-sm">Region</th>
                     <th className="num">Price</th>
                     <th className="num">Qty</th>
                     <th className="num hide-sm">Time listed</th>
+                    <th>Source</th>
                     <th>When</th>
                   </tr>
                 </thead>
@@ -385,10 +389,18 @@ export function ItemPage({
                     <tr key={`${s.merchant}|${s.at}|${i}`}>
                       <td><span className={`side side-${s.side}`}>{s.side === "sell" ? "Sold" : "Bought"}</span></td>
                       <td>{s.merchant}</td>
+                      <td className="hide-sm">{s.counterparty ?? <span className="muted">—</span>}</td>
                       <td className="hide-sm">{s.region ?? "—"}</td>
                       <td className="num price">{gold(s.price)}</td>
                       <td className="num">{s.quantity}</td>
-                      <td className="num hide-sm muted">{duration((s.at - s.listedAt) / 3_600_000)}</td>
+                      <td className="num hide-sm muted">{s.listedAt == null ? "—" : duration((s.at - s.listedAt) / 3_600_000)}</td>
+                      <td>
+                        {s.source === "observed" ? (
+                          <span className="badge" title="Witnessed in game by a reporting character">Seen</span>
+                        ) : (
+                          <span className="badge badge-muted" title="Inferred from stand snapshots">Estimated</span>
+                        )}
+                      </td>
                       <td className="muted">{ago(s.at)}</td>
                     </tr>
                   ))}

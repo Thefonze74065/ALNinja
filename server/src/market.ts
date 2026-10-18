@@ -1,6 +1,7 @@
 import { config } from "./config.ts";
 import { db } from "./db.ts";
 import { capAtShop, getGameMeta, npcSellValue, npcShopPrice } from "./gamedata.ts";
+import { mergedTrades, type Inferred } from "./observed.ts";
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
@@ -82,7 +83,7 @@ const stmts = {
     WHERE item = ?1 AND (?2 = 'ALL' OR region = ?2) AND at >= ?3
     GROUP BY level, variant, side, slot ORDER BY slot`),
   recentSales: db.prepare(`
-    SELECT merchant, side, item, level, variant, region, price, quantity, listed_at, at FROM sales
+    SELECT id, listing_id, merchant, side, item, level, variant, region, price, quantity, listed_at, at FROM sales
     WHERE (?1 IS NULL OR item = ?1) AND (?2 = 'ALL' OR region = ?2) AND at >= ?3
     ORDER BY at DESC LIMIT ?4`),
   // Each sell listing opened in the window, priced against the market index at the hour it appeared.
@@ -275,19 +276,13 @@ export function openListings(item: string, region: string) {
   }));
 }
 
+/**
+ * Recent trades, newest first: trades players' characters observed (source "observed", with the
+ * counterparty) plus inferred sales that no observation accounts for (source "estimated").
+ */
 export function recentSales(item: string | null, region: string, since: number, limit: number) {
-  return (stmts.recentSales.all(item, region, since, limit) as any[]).map((s) => ({
-    item: s.item,
-    side: s.side,
-    level: s.level,
-    variant: s.variant,
-    price: s.price,
-    quantity: s.quantity,
-    merchant: s.merchant,
-    region: s.region,
-    listedAt: s.listed_at,
-    at: s.at,
-  }));
+  const inferred = stmts.recentSales.all(item, region, since, limit) as unknown as Inferred[];
+  return mergedTrades(item, region, since, inferred, limit);
 }
 
 const BANDS = [

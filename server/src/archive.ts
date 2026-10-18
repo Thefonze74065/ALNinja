@@ -11,7 +11,7 @@ import { db, transaction } from "./db.ts";
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
-export const ARCHIVE_KINDS = ["prices", "sales"] as const;
+export const ARCHIVE_KINDS = ["prices", "sales", "observed"] as const;
 export type ArchiveKind = (typeof ARCHIVE_KINDS)[number];
 
 const COLUMNS: Record<ArchiveKind, string[]> = {
@@ -19,6 +19,8 @@ const COLUMNS: Record<ArchiveKind, string[]> = {
     "sellers", "buyers", "quantity"],
   sales: ["time", "at_ms", "item", "level", "variant", "region", "side", "price", "quantity", "merchant",
     "listed_at_ms"],
+  observed: ["time", "at_ms", "merchant", "counterparty", "side", "item", "level", "variant", "price", "quantity",
+    "region", "server", "map", "reporter"],
 };
 
 const stmts = {
@@ -28,6 +30,9 @@ const stmts = {
   dayPrices: db.prepare(`
     SELECT bucket, item, region, level, variant, sell_p25, sell_min, sell_median, buy_max, sell_count, buy_count, sell_qty
     FROM price_history WHERE bucket >= ? AND bucket < ? ORDER BY bucket, item, region, level, variant`),
+  dayObserved: db.prepare(`
+    SELECT at, merchant, counterparty, side, item, level, variant, price, quantity, region, server, map, reporter
+    FROM observed_sales WHERE at >= ? AND at < ? ORDER BY at, id`),
   daySales: db.prepare(`
     SELECT at, item, level, variant, region, side, price, quantity, merchant, listed_at
     FROM sales WHERE at >= ? AND at < ? ORDER BY at, id`),
@@ -72,7 +77,7 @@ function writeCsv(kind: ArchiveKind, day: number, rows: unknown[][]) {
   fs.renameSync(`${file}.tmp`, file);
 }
 
-/** Writes one day's hourly prices and sales to the CSV archive and marks the day done. */
+/** Writes one day's hourly prices, inferred sales and observed trades to the CSV archive and marks the day done. */
 export function exportDay(day: number) {
   const iso = (ms: number) => new Date(ms).toISOString();
   const prices = (stmts.dayPrices.all(day, day + DAY) as any[]).map((r) => [
@@ -82,8 +87,13 @@ export function exportDay(day: number) {
   const sales = (stmts.daySales.all(day, day + DAY) as any[]).map((s) => [
     iso(s.at), s.at, s.item, s.level, s.variant, s.region, s.side, s.price, s.quantity, s.merchant, s.listed_at,
   ]);
+  const observed = (stmts.dayObserved.all(day, day + DAY) as any[]).map((o) => [
+    iso(o.at), o.at, o.merchant, o.counterparty, o.side, o.item, o.level, o.variant, o.price, o.quantity, o.region,
+    o.server, o.map, o.reporter,
+  ]);
   writeCsv("prices", day, prices);
   writeCsv("sales", day, sales);
+  writeCsv("observed", day, observed);
   stmts.markArchived.run(day, Date.now());
 }
 

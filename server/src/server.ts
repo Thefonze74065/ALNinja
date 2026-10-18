@@ -58,7 +58,11 @@ app.use(
   }),
 );
 // Open to any origin so in-game code (running on adventure.land) and other tools can call it.
-app.use("/api/*", cors({ origin: "*", allowMethods: ["GET"] }), rateLimit);
+app.use(
+  "/api/*",
+  cors({ origin: "*", allowMethods: ["GET", "POST"], allowHeaders: ["Content-Type", "Authorization"] }),
+  rateLimit,
+);
 app.route("/api/v1", v1);
 app.route("/api", api);
 app.all("/api/*", (c) => c.json({ error: "Not found. See GET /api/v1 for endpoints." }, 404));

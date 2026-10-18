@@ -44,6 +44,12 @@ const ENDPOINTS = [
     example: "/api/v1/deals?kind=npc",
   },
   {
+    path: "/api/v1/accuracy",
+    params: "days=7 (max 90)",
+    desc: "How estimated sales compare with trades reporting characters witnessed: recall, precision, misses.",
+    example: "/api/v1/accuracy?days=7",
+  },
+  {
     path: "/api/v1/archive",
     params: "",
     desc: "Daily gzipped CSVs of every hourly price row and every sale, for bulk analysis. Each file links to its download.",
@@ -65,10 +71,74 @@ const FIELDS: [string, string][] = [
 ];
 
 interface ArchiveFile {
-  kind: "prices" | "sales";
+  kind: "prices" | "sales" | "observed";
   date: string;
   bytes: number;
   url: string;
+}
+
+function Reporting({ base }: { base: string }) {
+  const snippet = `// ALNinja sale reporter: sends stand trades this character witnesses to ALNinja.
+// The game shows every stand trade ("+$$") to characters that can see the merchant.
+const ALNINJA_URL = "${base}";
+const ALNINJA_TOKEN = "paste the instance's REPORT_TOKEN here";
+
+const alninja = { sales: [] };
+alninja.onUi = (data) => {
+  if (data.type !== "+$$" || !data.item) return;
+  alninja.sales.push({
+    at: Date.now(), seller: data.seller, buyer: data.buyer, slot: data.slot,
+    filledBuyOrder: data.snum !== undefined, // a buy order was filled, rather than a stand purchase
+    item: data.item,
+  });
+};
+parent.socket.on("ui", alninja.onUi);
+
+alninja.flush = async () => {
+  const sales = alninja.sales.splice(0, 500);
+  const inView = Object.values(parent.entities).filter((e) => e.player && e.stand).map((e) => e.name);
+  try {
+    const res = await fetch(\`\${ALNINJA_URL}/api/v1/observations\`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: \`Bearer \${ALNINJA_TOKEN}\` },
+      body: JSON.stringify({
+        reporter: character.name, sentAt: Date.now(), region: server.region, server: server.id,
+        map: character.map, inView, sales,
+      }),
+    });
+    if (!res.ok) game_log(\`ALNinja: \${(await res.json()).error ?? res.status}\`);
+  } catch (e) {
+    alninja.sales.unshift(...sales.slice(-500)); // offline: keep them for the next try
+  }
+};
+alninja.timer = setInterval(alninja.flush, 30_000);
+
+// Stop cleanly when the code stops (keeping the game's own cleanup).
+const alninjaDestroy = on_destroy;
+on_destroy = () => {
+  parent.socket.off("ui", alninja.onUi);
+  clearInterval(alninja.timer);
+  alninja.flush();
+  alninjaDestroy();
+};`;
+
+  return (
+    <div className="panel">
+      <h2>Report trades from your characters</h2>
+      <p className="small">
+        Stand snapshots can't tell a sale from a merchant taking stock down, but the game itself shows every stand
+        trade (the floating "+$$") to characters that can see the merchant. Characters running this snippet report
+        those trades, and the merchants in view, to this instance: sales they witness show as{" "}
+        <span className="badge">Seen</span> with the buyer, and the <a href="#/accuracy">accuracy page</a> measures
+        the estimates against them. Characters parked in town see the most.
+      </p>
+      <p className="small">
+        Reporting needs the instance's <code>REPORT_TOKEN</code> (set on the server; ask the instance owner), so only
+        trusted characters can submit. A character doesn't see trades at its own stand.
+      </p>
+      <pre><code>{snippet}</code></pre>
+    </div>
+  );
 }
 
 function BulkData() {
@@ -84,6 +154,7 @@ function BulkData() {
   }, []);
   const prices = (files ?? []).filter((f) => f.kind === "prices").reverse();
   const salesByDate = new Map((files ?? []).filter((f) => f.kind === "sales").map((f) => [f.date, f]));
+  const observedByDate = new Map((files ?? []).filter((f) => f.kind === "observed").map((f) => [f.date, f]));
   const total = (files ?? []).reduce((a, f) => a + f.bytes, 0);
   const size = (b: number) => (b > 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
 
@@ -111,6 +182,7 @@ function BulkData() {
                   <th>Day (UTC)</th>
                   <th>Prices</th>
                   <th>Sales</th>
+                  <th>Seen trades</th>
                 </tr>
               </thead>
               <tbody>
@@ -121,6 +193,14 @@ function BulkData() {
                       <td>{f.date}</td>
                       <td><a href={f.url}>prices</a> <span className="muted">{size(f.bytes)}</span></td>
                       <td>{sale && <><a href={sale.url}>sales</a> <span className="muted">{size(sale.bytes)}</span></>}</td>
+                      <td>
+                        {observedByDate.get(f.date) && (
+                          <>
+                            <a href={observedByDate.get(f.date)!.url}>seen</a>{" "}
+                            <span className="muted">{size(observedByDate.get(f.date)!.bytes)}</span>
+                          </>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -231,6 +311,7 @@ for (const p of prices) console.log(p.item, p.level, p.price, p.soldPerDay);`;
         <h2>Node example</h2>
         <pre><code>{node}</code></pre>
       </div>
+      <Reporting base={base} />
       <BulkData />
       <p className="footnote">
         Sales are estimates: a stack shrinking, or a listing disappearing while the rest of the stand stays up (and not

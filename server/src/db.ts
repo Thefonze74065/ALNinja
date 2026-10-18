@@ -137,6 +137,43 @@ db.exec(`
   );
 `);
 
+// Ground truth from players' characters: the game's "+$$" event for each stand trade they could see,
+// and which merchants each reporter had in view when (to know which inferred sales were checkable).
+// Not derived from the raw archive, so rebuilds copy these tables across.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS observed_sales (
+    id           INTEGER PRIMARY KEY,
+    merchant     TEXT NOT NULL,    -- stand owner
+    counterparty TEXT NOT NULL,    -- the other player
+    side         TEXT NOT NULL,    -- 'sell': stand sold to counterparty; 'buy': stand's buy order filled
+    item         TEXT NOT NULL,
+    level        INTEGER NOT NULL,
+    variant      TEXT NOT NULL,
+    price        INTEGER NOT NULL, -- per unit
+    quantity     INTEGER NOT NULL,
+    slot         TEXT,
+    region       TEXT,
+    server       TEXT,
+    map          TEXT,
+    at           INTEGER NOT NULL, -- when the reporter saw it (corrected for its clock skew)
+    reporter     TEXT NOT NULL,
+    received_at  INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS observed_sales_item ON observed_sales (item, at);
+  CREATE INDEX IF NOT EXISTS observed_sales_merchant ON observed_sales (merchant, at);
+  CREATE INDEX IF NOT EXISTS observed_sales_at ON observed_sales (at);
+
+  CREATE TABLE IF NOT EXISTS observer_coverage (
+    id       INTEGER PRIMARY KEY,
+    reporter TEXT NOT NULL,
+    merchant TEXT NOT NULL,
+    start    INTEGER NOT NULL,
+    end      INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS observer_coverage_merchant ON observer_coverage (merchant, end);
+  CREATE INDEX IF NOT EXISTS observer_coverage_reporter ON observer_coverage (reporter, merchant, end);
+`);
+
 // v0.3 listings had no flags column.
 if (!(db.prepare("PRAGMA table_info(listings)").all() as { name: string }[]).some((c) => c.name === "flags")) {
   db.exec("ALTER TABLE listings ADD COLUMN flags TEXT NOT NULL DEFAULT ''");
