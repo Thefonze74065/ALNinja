@@ -185,6 +185,9 @@ Scripts and bots should use the versioned public API. It's documented in the app
 - `GET /api/v1/sales?item=&hours=24`: recent estimated sales
 - `GET /api/v1/movers?window=24h|7d`: biggest risers/fallers and most traded
 - `GET /api/v1/deals?kind=npc,flip,underpriced,craft`: listings worth buying now
+- `GET /api/v1/value/:item?level=8&exclude=YourMerchant`: a suggested price to sell one at, from the best
+  evidence there is (other sellers' asks capped at the cost to make, recent sales, the last asking price,
+  the cost to make, NPC value), with `basis` naming which
 - `GET /api/v1/upgrades/:item`: expected cost of each upgrade/compound level, from +0 and by the
   cheapest route (buy a lower level and upgrade), at the game's base success chances
 - `GET /api/v1/archive`: daily CSV files (all hourly prices, all sales) for bulk analysis

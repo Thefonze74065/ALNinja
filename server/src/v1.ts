@@ -4,11 +4,13 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { archiveFile, listArchive } from "./archive.ts";
 import { config } from "./config.ts";
+import { getGameMeta } from "./gamedata.ts";
 import { addCorrection, correctionProblem, recentCorrections, type Correction } from "./corrections.ts";
 import { isRevoked, KEY_SUBJECT, keyOwner, keyStatus } from "./keys.ts";
 import { accuracy, recordReport, validateReport, type ObservationReport } from "./observed.ts";
 import { dealOptions, deals, HOUR, history, lastPoll, movers, openListings, recentSales, regionParam, snapshot, type MarketRow } from "./market.ts";
 import { upgradeCosts } from "./upgrades.ts";
+import { suggestedValue } from "./value.ts";
 
 const clamp = (raw: string | undefined, fallback: number, min: number, max: number) => {
   const n = Number(raw);
@@ -43,6 +45,8 @@ v1.get("/", (c) =>
       "GET /api/v1/listings/:item": "Open merchant listings with location. ?region= &side=sell|buy",
       "GET /api/v1/upgrades/:item":
         "Expected cost of each upgrade/compound level, from +0 and by the cheapest route (buy lower, upgrade up). ?region=",
+      "GET /api/v1/value/:item":
+        "Suggested price to sell one at ?level= (&variant=), from asks, recent sales, last price, cost to make or NPC value. &exclude=YourMerchant &region=",
       "GET /api/v1/sales": "Recent estimated sales. ?region= &item= &hours=24 (max 720) &limit=500 (max 2000)",
       "GET /api/v1/movers": "Biggest price changes and most traded. ?region= &window=24h|7d &min_sellers=3 &limit=20",
       "GET /api/v1/accuracy": "How inferred sales compare with trades players' characters saw. ?days=7 (max 90)",
@@ -103,6 +107,15 @@ v1.get("/upgrades/:item", (c) => {
   const region = regionParam(c.req.query("region"));
   const costs = upgradeCosts(c.req.param("item"), region, snapshot(region));
   return costs ? c.json(costs) : c.json({ error: "Not an upgradeable or compoundable item" }, 404);
+});
+
+v1.get("/value/:item", (c) => {
+  const item = c.req.param("item");
+  const level = clamp(c.req.query("level"), 0, 0, 20);
+  const variant = c.req.query("variant") ?? "";
+  if (!getGameMeta().items[item]) return c.json({ error: "Unknown item" }, 404);
+  return c.json(suggestedValue(item, Math.floor(level), variant, regionParam(c.req.query("region")),
+    c.req.query("exclude") || undefined));
 });
 
 v1.get("/sales", (c) => {

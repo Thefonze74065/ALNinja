@@ -44,6 +44,12 @@ const ENDPOINTS = [
     example: "/api/v1/deals?kind=npc",
   },
   {
+    path: "/api/v1/value/:item",
+    params: "region, level=0, variant, exclude=YourMerchant",
+    desc: "A suggested price to sell one at: the cheapest other seller (capped at the cost to make), else recent sales, the last asking price, the cost to make, or what an NPC pays; never under the best bid. `basis` says which, and every input is included.",
+    example: "/api/v1/value/throwingstars?level=8",
+  },
+  {
     path: "/api/v1/upgrades/:item",
     params: "region",
     desc: "Expected cost of each upgrade or compound level at the game's base chances: from +0, and by the cheapest route (buy a lower level, upgrade from there).",
