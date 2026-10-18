@@ -39,9 +39,15 @@ const ENDPOINTS = [
   },
   {
     path: "/api/v1/deals",
-    params: "region, kind=npc,underpriced,flip, min_discount=0.2, min_sellers=3, min_profit=1, sort=profit|discount, limit=100",
-    desc: "Listings worth buying now: NPC pays more, another merchant bids more, or well under the next seller.",
+    params: "region, kind=npc,underpriced,flip,craft, min_discount=0.2, min_sellers=3, min_profit=1, sort=profit|discount, limit=100",
+    desc: "Listings worth buying now: NPC pays more, another merchant bids more, well under the next seller, or (craft) well under both the next seller and the cost to make.",
     example: "/api/v1/deals?kind=npc",
+  },
+  {
+    path: "/api/v1/upgrades/:item",
+    params: "region",
+    desc: "Expected cost of each upgrade or compound level at the game's base chances: from +0, and by the cheapest route (buy a lower level, upgrade from there).",
+    example: "/api/v1/upgrades/throwingstars",
   },
   {
     path: "/api/v1/accuracy",
