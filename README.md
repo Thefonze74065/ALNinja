@@ -31,8 +31,8 @@ history, so ALNinja keeps its own:
    at a higher level were consumed upgrading or compounding (`upgraded`), not sold. If a
    reporter (see 4) was watching the stand the whole time the listing could have sold (a
    character with the stand in view, or the merchant itself sending its trade history), what it saw
-   decides: with no witnessed trade the listing is `unsold`, not a sale. Sales are dated
-   when the listing vanished. Sales feed
+   decides: with no witnessed trade the listing is `unsold`, not a sale. A listing whose every unit was
+   reported traded is a sale without waiting the 2 hours. Sales are dated when the listing vanished. Sales feed
    sold-per-day figures, the most-traded list, and each item's time-to-sell by price band.
 4. **Witnessed trades (optional)**: stand snapshots can't tell a sale from a take-down, but the game shows
    every stand trade (the "+$$" event: seller, buyer, item, price, quantity) to characters that can see the

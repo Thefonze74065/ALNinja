@@ -167,3 +167,35 @@ describe("watched stands", () => {
     assert.deepEqual(fp.map((f) => [f.merchant, f.unconfirmed]), [["OwnPulled", 1]]);
   });
 });
+
+describe("reported sales", () => {
+  // Two stacks of two vanish at tB; a bystander reports both units of one trading before ALData catches up.
+  const tA = now - 10 * HOUR;
+  const tB = tA + HOUR;
+  const keep = { trade1: { name: "t_keep_r", price: 1 } };
+  const stand = (t: number, up: boolean) => [
+    merchant("Reported", t, {
+      ...keep,
+      ...(up ? { trade2: { name: "t_rep_all", price: 100, q: 2 }, trade3: { name: "t_rep_half", price: 100, q: 2 } } : {}),
+    }),
+  ];
+  const reason = (item: string) =>
+    (db.prepare("SELECT close_reason FROM listings WHERE merchant = 'Reported' AND item = ?").get(item) as any).close_reason;
+  const sold = (item: string) =>
+    db.prepare("SELECT quantity, at FROM sales WHERE merchant = 'Reported' AND item = ?").all(item) as any[];
+  const report = (name: string, q: number, at: number) =>
+    recordReport({ reporter: "Bystander", sentAt: at, sales: [
+      { at, seller: "Reported", buyer: "Shopper", slot: "trade2", item: { name, q, price: 100 } },
+    ] }, at);
+
+  test("a listing whose every unit was reported sold is a sale without waiting", () => {
+    ingest(stand(tA, true), tA);
+    report("t_rep_all", 2, tB - MINUTE);
+    report("t_rep_half", 1, tB - MINUTE);
+    ingest(stand(tB, false), tB);
+    assert.equal(reason("t_rep_all"), "gone");
+    assert.deepEqual(sold("t_rep_all").map((s) => [s.quantity, s.at]), [[2, tB]]);
+    assert.equal(reason("t_rep_half"), "pending", "one unit unaccounted for: still waits");
+    assert.equal(sold("t_rep_half").length, 0);
+  });
+});

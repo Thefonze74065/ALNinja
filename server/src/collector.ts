@@ -81,17 +81,17 @@ const stmts = {
   pendingFor: db.prepare(`
     SELECT id, slot, side, item, level, variant, price, quantity, flags, first_seen, closed_at, server_region
     FROM listings WHERE merchant = ? AND close_reason = 'pending' AND closed_at >= ? ORDER BY closed_at DESC`),
-  duePending: db.prepare(`
+  allPending: db.prepare(`
     SELECT id, merchant, slot, side, item, level, variant, price, quantity, flags, first_seen, last_seen, closed_at,
       server_region
-    FROM listings WHERE close_reason = 'pending' AND closed_at < ? ORDER BY closed_at, id`),
+    FROM listings WHERE close_reason = 'pending' ORDER BY closed_at, id`),
   // Reporters whose characters had the merchant's stand in view for a whole stretch (see witnessed).
   watchers: db.prepare("SELECT reporter FROM observer_coverage WHERE merchant = ? AND start <= ? AND end >= ?"),
   corrected: db.prepare(`
     SELECT 1 FROM corrections WHERE merchant = ? AND (item IS NULL OR item = ?) AND from_at <= ?3 AND to_at >= ?3 LIMIT 1`),
   observedTrades: db.prepare(`
     SELECT quantity, reporter, key_owner FROM observed_sales WHERE merchant = ? AND side = ? AND item = ? AND level = ?
-      AND variant = ? AND price = ? AND at BETWEEN ? AND ?`),
+      AND variant = ? AND price = ? AND at BETWEEN ? AND ? AND received_at <= ?`),
   setReason: db.prepare("UPDATE listings SET close_reason = ? WHERE id = ?"),
   insertSale: db.prepare(`
     INSERT INTO sales (listing_id, merchant, side, item, level, variant, region, price, quantity, listed_at, at)
@@ -295,30 +295,43 @@ const corrected = (merchant: string, item: string, at: number) => Boolean(stmts.
 const REPORT_SLACK_MS = 2 * 60_000;
 
 /**
+ * Units of a vanished listing that reporters saw trade, counting only reports received by `at` so a
+ * rebuild decides as live polling did.
+ */
+function reported(l: PendingListing & { merchant: string }, at: number): number {
+  const trades = stmts.observedTrades.all(l.merchant, l.side, l.item, l.level, l.variant, l.price,
+    l.last_seen - REPORT_SLACK_MS, l.closed_at + REPORT_SLACK_MS, at) as { quantity: number; reporter: string; key_owner: string }[];
+  return trades.filter((t) => !isRevoked(t.reporter) && !isRevoked(t.key_owner)).reduce((a, t) => a + t.quantity, 0);
+}
+
+/**
  * Units of a vanished listing that reporters saw trade, or null if no reporter watched the stand for
  * the whole stretch in which it could have sold (from when it was last seen listed until it vanished).
  */
-function witnessed(l: PendingListing & { merchant: string }): number | null {
+function witnessed(l: PendingListing & { merchant: string }, at: number): number | null {
   const watched = (stmts.watchers.all(l.merchant, l.last_seen, l.closed_at - REPORT_SLACK_MS) as { reporter: string }[])
     .some((w) => !isRevoked(w.reporter));
-  if (!watched) return null;
-  const trades = stmts.observedTrades.all(l.merchant, l.side, l.item, l.level, l.variant, l.price,
-    l.last_seen - REPORT_SLACK_MS, l.closed_at + REPORT_SLACK_MS) as { quantity: number; reporter: string; key_owner: string }[];
-  return trades.filter((t) => !isRevoked(t.reporter) && !isRevoked(t.key_owner)).reduce((a, t) => a + t.quantity, 0);
+  return watched ? reported(l, at) : null;
 }
 
 /**
  * Vanished listings that weren't put back within SALE_CONFIRM_MS are sales, dated when they vanished.
  * If a reporter was watching the stand, what they saw trade decides instead: "unsold" when nothing did.
+ * Listings whose every unit was reported traded don't wait: they're sales as soon as the report is in.
  */
 function confirmPendingSales(at: number, stats: Stats) {
-  for (const l of stmts.duePending.all(at - SALE_CONFIRM_MS) as unknown as (PendingListing & { merchant: string })[]) {
+  for (const l of stmts.allPending.all() as unknown as (PendingListing & { merchant: string })[]) {
+    const due = l.closed_at < at - SALE_CONFIRM_MS;
     if (corrected(l.merchant, l.item, l.closed_at)) {
-      stmts.setReason.run("withdrawn", l.id);
+      if (due) stmts.setReason.run("withdrawn", l.id);
       continue;
     }
-    const seen = witnessed(l);
-    const units = seen == null ? l.quantity : Math.min(seen, l.quantity);
+    let units: number;
+    if (due) {
+      const seen = witnessed(l, at);
+      units = seen == null ? l.quantity : Math.min(seen, l.quantity);
+    } else if (reported(l, at) >= l.quantity) units = l.quantity;
+    else continue;
     stmts.setReason.run(units ? "gone" : "unsold", l.id);
     if (!units) continue;
     stmts.insertSale.run(l.id, l.merchant, l.side, l.item, l.level, l.variant, l.server_region, l.price, units,
